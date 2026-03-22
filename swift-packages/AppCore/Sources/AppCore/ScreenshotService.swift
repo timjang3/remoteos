@@ -1,6 +1,8 @@
 import AppKit
 import Foundation
+import ImageIO
 @preconcurrency import ScreenCaptureKit
+import UniformTypeIdentifiers
 
 public final class ScreenshotService: @unchecked Sendable {
     private let gate = CaptureGate()
@@ -44,6 +46,7 @@ public final class ScreenshotService: @unchecked Sendable {
                     let filter = SCContentFilter(desktopIndependentWindow: window)
                     let info = SCShareableContent.info(for: filter)
                     let configuration = SCStreamConfiguration()
+                    configuration.pixelFormat = kCVPixelFormatType_32BGRA
                     configuration.width = max(Int(info.contentRect.width * CGFloat(info.pointPixelScale)), 1)
                     configuration.height = max(Int(info.contentRect.height * CGFloat(info.pointPixelScale)), 1)
                     configuration.showsCursor = true
@@ -138,6 +141,7 @@ public final class ScreenshotService: @unchecked Sendable {
 
         let filter = SCContentFilter(display: display, excludingWindows: [])
         let configuration = SCStreamConfiguration()
+        configuration.pixelFormat = kCVPixelFormatType_32BGRA
         configuration.sourceRect = regionInDisplay
         configuration.width = max(Int(windowRect.width * scale), 1)
         configuration.height = max(Int(windowRect.height * scale), 1)
@@ -171,8 +175,12 @@ public final class ScreenshotService: @unchecked Sendable {
     }
 
     private func encode(image: CGImage) throws -> (dataBase64: String, width: Int, height: Int) {
-        let bitmap = NSBitmapImageRep(cgImage: image)
-        guard let data = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.78]) else {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else {
+            throw AppCoreError.invalidResponse
+        }
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.78] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
             throw AppCoreError.invalidResponse
         }
 

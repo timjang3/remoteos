@@ -1,9 +1,10 @@
-import AppKit
 import CoreImage
 import CoreMedia
 import CoreVideo
 import Foundation
+import ImageIO
 import ScreenCaptureKit
+import UniformTypeIdentifiers
 
 public final class WindowStreamService: NSObject, @unchecked Sendable {
     public var onFrame: (@MainActor @Sendable (CapturedFrame) async -> Void)?
@@ -35,6 +36,7 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
         let configuration = SCStreamConfiguration()
         configuration.width = max(Int(info.contentRect.width * CGFloat(info.pointPixelScale)), 1)
         configuration.height = max(Int(info.contentRect.height * CGFloat(info.pointPixelScale)), 1)
+        configuration.pixelFormat = kCVPixelFormatType_32BGRA
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: 4)
         configuration.showsCursor = true
         configuration.capturesAudio = false
@@ -85,7 +87,12 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
             return nil
         }
 
-        guard let data = NSBitmapImageRep(cgImage: cgImage).representation(using: .jpeg, properties: [.compressionFactor: 0.78]) else {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else {
+            return nil
+        }
+        CGImageDestinationAddImage(destination, cgImage, [kCGImageDestinationLossyCompressionQuality: 0.78] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
             return nil
         }
 

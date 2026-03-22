@@ -1,0 +1,13 @@
+node_modules
+.turbo
+dist
+build
+.DS_Store
+coverage
+apps/web/dev-dist
+apps/web/.vite
+apps/macos/.build
+swift-packages/AppCore/.build
+*.xcuserdata
+*.xcuserstate
+DerivedData

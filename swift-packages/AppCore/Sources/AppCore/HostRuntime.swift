@@ -7,16 +7,9 @@ private struct DeckSnapshotFailureState {
     var lastLoggedAt: Date
 }
 
-public enum OpenAIAPIKeyPersistenceMode: String, CaseIterable, Sendable {
-    case sessionOnly = "session_only"
-    case keychain
-}
-
 public enum OpenAIAPIKeyStorageSource: String, Sendable {
     case none
-    case session
-    case keychain
-    case environment
+    case saved
 }
 
 @MainActor
@@ -67,7 +60,6 @@ public final class HostRuntime: ObservableObject {
     private var pendingPromptTimeoutTasks: [String: Task<Void, Never>] = [:]
     private var pendingPromptsAwaitingResolution: Set<String> = []
     private var deckSnapshotFailures: [Int: DeckSnapshotFailureState] = [:]
-    private var sessionOpenAIAPIKey: String?
 
     public init(
         configurationStore: ConfigurationStore = ConfigurationStore(),
@@ -302,41 +294,17 @@ public final class HostRuntime: ObservableObject {
     }
 
     public func currentOpenAIAPIKey() -> String {
-        sessionOpenAIAPIKey ?? openAIAPIKeyStore.load() ?? ""
+        openAIAPIKeyStore.load() ?? ""
     }
 
-    @discardableResult
-    public func updateOpenAIAPIKey(_ apiKey: String, persistence: OpenAIAPIKeyPersistenceMode) -> Result<Void, Error> {
-        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        do {
-            switch persistence {
-            case .sessionOnly:
-                sessionOpenAIAPIKey = trimmed.isEmpty ? nil : trimmed
-            case .keychain:
-                try openAIAPIKeyStore.save(trimmed)
-                sessionOpenAIAPIKey = nil
-            }
-            refreshOpenAIAPIKeyState()
-            return .success(())
-        } catch {
-            log.error("Failed to update OpenAI API key persistence=\(persistence.rawValue) error=\(error.localizedDescription)")
-            refreshOpenAIAPIKeyState()
-            return .failure(error)
-        }
+    public func updateOpenAIAPIKey(_ apiKey: String) {
+        openAIAPIKeyStore.save(apiKey)
+        refreshOpenAIAPIKeyState()
     }
 
-    @discardableResult
-    public func clearPersistedOpenAIAPIKey() -> Result<Void, Error> {
-        do {
-            try openAIAPIKeyStore.save(nil)
-            refreshOpenAIAPIKeyState()
-            return .success(())
-        } catch {
-            log.error("Failed to clear persisted OpenAI API key error=\(error.localizedDescription)")
-            refreshOpenAIAPIKeyState()
-            return .failure(error)
-        }
+    public func clearOpenAIAPIKey() {
+        openAIAPIKeyStore.save(nil)
+        refreshOpenAIAPIKeyState()
     }
 
     public func requestScreenRecordingPermission() {
@@ -645,52 +613,22 @@ public final class HostRuntime: ObservableObject {
     }
 
     private func resolvedOpenAIAPIKey() -> String? {
-        if let sessionOpenAIAPIKey {
-            let trimmed = sessionOpenAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                return trimmed
-            }
+        if let value = openAIAPIKeyStore.load()?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !value.isEmpty {
+            return value
         }
-
-        if let keychainValue = openAIAPIKeyStore.loadKeychainValue()?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !keychainValue.isEmpty {
-            return keychainValue
-        }
-
-        if let environmentValue = ProcessInfo.processInfo.environment["OPENAI_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !environmentValue.isEmpty {
-            return environmentValue
-        }
-
         return nil
     }
 
     private func refreshOpenAIAPIKeyState() {
-        if let sessionOpenAIAPIKey {
-            let trimmed = sessionOpenAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                openAIAPIKeyConfigured = true
-                openAIAPIKeyStorageSource = .session
-                return
-            }
-        }
-
-        if let keychainValue = openAIAPIKeyStore.loadKeychainValue()?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !keychainValue.isEmpty {
+        if let value = openAIAPIKeyStore.load()?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !value.isEmpty {
             openAIAPIKeyConfigured = true
-            openAIAPIKeyStorageSource = .keychain
-            return
+            openAIAPIKeyStorageSource = .saved
+        } else {
+            openAIAPIKeyConfigured = false
+            openAIAPIKeyStorageSource = .none
         }
-
-        if let environmentValue = ProcessInfo.processInfo.environment["OPENAI_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !environmentValue.isEmpty {
-            openAIAPIKeyConfigured = true
-            openAIAPIKeyStorageSource = .environment
-            return
-        }
-
-        openAIAPIKeyConfigured = false
-        openAIAPIKeyStorageSource = .none
     }
 
     private func publishSemanticDiffIfNeeded() async {
@@ -876,6 +814,18 @@ public final class HostRuntime: ObservableObject {
                 await brokerClient.sendSuccess(id: request.id ?? UUID().uuidString, payload: ["ok": true])
             } catch {
                 await brokerClient.sendError(id: request.id, code: -32000, message: error.localizedDescription)
+            }
+        case "agent.config.setModel":
+            guard let modelId = request.params["modelId"] as? String, !modelId.isEmpty else {
+                await brokerClient.sendError(id: request.id, code: -32602, message: "Missing modelId")
+                return
+            }
+            log.info("Setting codex model to \(modelId)")
+            configuration.codexModel = modelId
+            configurationStore.save(configuration)
+            await brokerClient.sendSuccess(id: request.id ?? UUID().uuidString, payload: ["ok": true])
+            Task {
+                _ = await codexClient.prepareForTurns(forceStatusRefresh: true)
             }
         default:
             await brokerClient.sendError(id: request.id, code: -32601, message: "Unknown method \(request.method)")

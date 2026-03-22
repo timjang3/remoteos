@@ -43,14 +43,14 @@ private actor CallbackOrderRecorder {
 
 @Test func legacyCodexAliasUsesCompatibleHostManagedSessionSettings() {
     let configuration = CodexSessionConfiguration.resolved(
-        model: "gpt-5-codex",
+        model: "gpt-5.4-mini",
         cwd: "/tmp",
         approvalPolicy: "never",
         sandboxMode: "danger-full-access",
         profiles: CodexModelProfile.builtinProfiles()
     )
 
-    #expect(configuration.model == "gpt-5-codex")
+    #expect(configuration.model == "gpt-5.4-mini")
     #expect(configuration.reasoningEffort == .high)
     #expect(configuration.personality == nil)
 }

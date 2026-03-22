@@ -44,6 +44,8 @@ struct ContentView: View {
     let openSettingsWindow: () -> Void
     @State private var copiedPairingCode = false
     @State private var copiedURL = false
+    @State private var openAIApiKeyInput = ""
+    @State private var apiKeySaveMessage: String?
 
     private var allPermissionsGranted: Bool {
         runtime.permissions.screenRecording == .granted
@@ -73,13 +75,11 @@ struct ContentView: View {
                     Divider()
                         .padding(.horizontal, 16)
 
-                    if !runtime.openAIAPIKeyConfigured {
-                        computerUseSection
-                            .padding(.horizontal, 20)
+                    computerUseSection
+                        .padding(.horizontal, 20)
 
-                        Divider()
-                            .padding(.horizontal, 16)
-                    }
+                    Divider()
+                        .padding(.horizontal, 16)
 
                     windowsSection
                         .padding(.horizontal, 20)
@@ -257,14 +257,49 @@ struct ContentView: View {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
 
-            Text("Open Settings to paste your OpenAI API key for GPT-5.4 computer use.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if runtime.openAIAPIKeyConfigured {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                    Text("OpenAI API key configured")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Clear") {
+                        runtime.clearOpenAIAPIKey()
+                        openAIApiKeyInput = ""
+                        apiKeySaveMessage = nil
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                }
+            } else {
+                Text("Enter your OpenAI API key for GPT-5.4 computer use.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
-            Button("Open Settings") {
-                openSettingsWindow()
+                HStack(spacing: 6) {
+                    SecureField("sk-...", text: $openAIApiKeyInput)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption)
+                    Button("Save") {
+                        let trimmed = openAIApiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return }
+                        runtime.updateOpenAIAPIKey(trimmed)
+                        openAIApiKeyInput = ""
+                        apiKeySaveMessage = "API key saved."
+                    }
+                    .controlSize(.small)
+                }
+
+                if let apiKeySaveMessage {
+                    Text(apiKeySaveMessage)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
-            .controlSize(.small)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -525,12 +560,9 @@ struct SettingsView: View {
     @State private var controlPlaneURL = ""
     @State private var deviceName = ""
     @State private var codexModel = ""
-    @State private var openAIApiKey = ""
-    @State private var openAIApiKeyPersistence: OpenAIAPIKeyPersistenceMode = .sessionOnly
     @State private var hostMode: HostMode = .hosted
     @State private var launchAtLogin = false
     @State private var saveMessage: String?
-    @State private var saveMessageIsError = false
 
     var body: some View {
         Form {
@@ -563,41 +595,6 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Computer Use") {
-                SecureField("OpenAI API key", text: $openAIApiKey)
-                Picker("Persistence", selection: $openAIApiKeyPersistence) {
-                    Text("This launch only").tag(OpenAIAPIKeyPersistenceMode.sessionOnly)
-                    Text("macOS Keychain").tag(OpenAIAPIKeyPersistenceMode.keychain)
-                }
-                Text("Selected-window screenshots and your computer-use goal text are sent to OpenAI when the `remoteos_window_computer_use` tool runs.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                HStack {
-                    Text("Configured")
-                    Spacer()
-                    Text(runtime.openAIAPIKeyConfigured ? "Yes" : "No")
-                        .foregroundStyle(.secondary)
-                }
-                HStack {
-                    Text("Source")
-                    Spacer()
-                    Text(storageSourceLabel(runtime.openAIAPIKeyStorageSource))
-                        .foregroundStyle(.secondary)
-                }
-                if runtime.openAIAPIKeyStorageSource == .keychain {
-                    Button("Clear saved key") {
-                        switch runtime.clearPersistedOpenAIAPIKey() {
-                        case .success:
-                            saveMessage = "Cleared the saved Keychain key."
-                            saveMessageIsError = false
-                        case let .failure(error):
-                            saveMessage = error.localizedDescription
-                            saveMessageIsError = true
-                        }
-                    }
-                }
-            }
-
             Section("Launch") {
                 Toggle("Launch at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, value in
@@ -615,32 +612,19 @@ struct SettingsView: View {
 
             Button("Save settings") {
                 saveMessage = nil
-                saveMessageIsError = false
                 runtime.updateConfiguration(
                     baseURL: controlPlaneURL,
                     mode: hostMode,
                     deviceName: deviceName,
                     codexModel: codexModel
                 )
-                switch runtime.updateOpenAIAPIKey(openAIApiKey, persistence: openAIApiKeyPersistence) {
-                case .success:
-                    saveMessage = openAIApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        ? "Saved settings."
-                        : (openAIApiKeyPersistence == .keychain
-                            ? "Saved settings and stored the OpenAI key in Keychain."
-                            : "Saved settings and kept the OpenAI key for this launch only.")
-                    saveMessageIsError = false
-                    openAIApiKey = ""
-                case let .failure(error):
-                    saveMessage = error.localizedDescription
-                    saveMessageIsError = true
-                }
+                saveMessage = "Saved settings."
             }
 
             if let saveMessage {
                 Text(saveMessage)
                     .font(.caption)
-                    .foregroundStyle(saveMessageIsError ? .red : .secondary)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -648,22 +632,7 @@ struct SettingsView: View {
             controlPlaneURL = runtime.configuration.controlPlaneBaseURL
             deviceName = runtime.configuration.deviceName
             codexModel = runtime.configuration.codexModel
-            openAIApiKey = ""
-            openAIApiKeyPersistence = runtime.openAIAPIKeyStorageSource == .keychain ? .keychain : .sessionOnly
             hostMode = runtime.configuration.hostMode
-        }
-    }
-
-    private func storageSourceLabel(_ source: OpenAIAPIKeyStorageSource) -> String {
-        switch source {
-        case .none:
-            "Not configured"
-        case .session:
-            "This launch"
-        case .keychain:
-            "macOS Keychain"
-        case .environment:
-            "Environment variable"
         }
     }
 }

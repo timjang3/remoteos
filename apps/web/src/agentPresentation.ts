@@ -122,35 +122,27 @@ export function getCodexHeaderChips(status: CodexStatus | null) {
 
   const chips: string[] = [];
 
-  if (status.model) {
-    chips.push(status.model);
-  }
-
   switch (status.state) {
     case "running":
-      chips.push("working");
+      chips.push("Agent working");
       break;
     case "ready":
-      chips.push("ready");
+      chips.push("Agent ready");
       break;
     case "starting":
-      chips.push("starting");
+      chips.push("Starting up");
       break;
     case "error":
-      chips.push("error");
+      chips.push("Error");
       break;
     case "unauthenticated":
-      chips.push("sign in required");
+      chips.push("Sign in required");
       break;
     case "missing_cli":
-      chips.push("CLI unavailable");
+      chips.push("Unavailable");
       break;
     default:
       break;
-  }
-
-  if (status.threadId) {
-    chips.push(`thread ${status.threadId.slice(0, 8)}`);
   }
 
   return chips;

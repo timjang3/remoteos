@@ -62,6 +62,26 @@ import {
 } from "./chatState.js";
 import "./app.css";
 
+const AVAILABLE_MODELS = [
+  { id: "gpt-5.4", name: "GPT-5.4", description: "Most capable" },
+  { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", description: "Fast & capable" },
+  { id: "gpt-5.3-codex", name: "Codex 5.3", description: "Coding optimized" },
+  { id: "gpt-5.3-codex-spark", name: "Codex Spark", description: "Quick coding" },
+  { id: "gpt-5.2-codex", name: "Codex 5.2", description: "Coding optimized" },
+  { id: "gpt-5.2", name: "GPT-5.2", description: "General purpose" },
+  { id: "gpt-5.1-codex-max", name: "Codex Max", description: "Extended thinking" },
+  { id: "gpt-5.1-codex-mini", name: "Codex Mini", description: "Lightweight" },
+];
+
+const MODEL_DISPLAY: Record<string, string> = Object.fromEntries(
+  AVAILABLE_MODELS.map((m) => [m.id, m.name])
+);
+
+function getModelDisplayName(modelId: string | null | undefined): string {
+  if (!modelId) return "Model";
+  return MODEL_DISPLAY[modelId] ?? modelId;
+}
+
 function getStoredToken() {
   if (typeof window === "undefined") return null;
   return window.localStorage.getItem("remoteos.clientToken");
@@ -136,6 +156,23 @@ function StopIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
       <rect x="6" y="6" width="12" height="12" rx="2" />
+    </svg>
+  );
+}
+
+function NewChatIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+    </svg>
+  );
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="6 9 12 15 18 9" />
     </svg>
   );
 }
@@ -349,8 +386,7 @@ function ChatTranscript({
                   key={item.id}
                   className={`user-prompt ${isOptimistic ? "user-prompt-pending" : ""}`}
                 >
-                  <div className="user-prompt-marker">&gt;</div>
-                  <div className="user-prompt-text">{item.body || item.title}</div>
+                  <div className="user-prompt-bubble">{item.body || item.title}</div>
                 </div>
               );
             }
@@ -560,6 +596,7 @@ export function App() {
   const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
 
   const [showWindows, setShowWindows] = useState(false);
+  const [showModelPicker, setShowModelPicker] = useState(false);
   const [isAgentStartPending, startAgentStartTransition] = useTransition();
 
   const clientRef = useRef<BrokerClient | null>(null);
@@ -907,6 +944,16 @@ export function App() {
     setShowWindows(true);
   }
 
+  async function handleSelectModel(modelId: string) {
+    if (!clientRef.current) return;
+    setShowModelPicker(false);
+    try {
+      await clientRef.current.setAgentModel(modelId);
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : "Failed to set model");
+    }
+  }
+
   function handleDisconnect() {
     clearStoredToken();
     window.location.reload();
@@ -967,28 +1014,22 @@ export function App() {
         <div className="chat-window-header">
           <div className="chat-window-header-left">
             <div className={`status-dot ${isConnected && hostStatus?.online ? "online" : "offline"}`} />
-            <div className="chat-window-header-copy">
-              <span className="chat-window-title">
-                {selectedWindow ? `${selectedWindow.ownerName} — ${selectedWindow.title}` : "RemoteOS"}
-              </span>
-              {codexHeaderChips.length > 0 ? (
-                <div className="chat-window-subtitle">
-                  {codexHeaderChips.map((chip) => (
-                    <span key={chip} className="codex-chip">{chip}</span>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+            <span className="chat-window-title">
+              {selectedWindow ? selectedWindow.title : "RemoteOS"}
+            </span>
           </div>
+          <button className="model-select-btn" onClick={() => setShowModelPicker(true)}>
+            <span>{getModelDisplayName(codexStatus?.model)}</span>
+            <ChevronDownIcon />
+          </button>
           <div className="chat-window-header-actions">
-            {transcript.length > 0 && (
-              <button
-                className="chat-header-btn chat-header-btn-text"
-                onClick={() => void handleResetThread()}
-              >
-                New
-              </button>
-            )}
+            <button
+              className="chat-header-btn"
+              onClick={() => void handleResetThread()}
+              aria-label="New chat"
+            >
+              <NewChatIcon />
+            </button>
             <button className="chat-header-btn" onClick={openWindowsSheet}>
               <WindowsIcon />
             </button>
@@ -1035,8 +1076,6 @@ export function App() {
             pending={pendingAgentSend !== null}
           />
         ) : null}
-
-        <TracePanel events={traceEvents} />
 
         <div className="chat-composer">
           <textarea
@@ -1174,6 +1213,32 @@ export function App() {
         >
           Disconnect
         </button>
+      </BottomSheet>
+
+      <BottomSheet
+        open={showModelPicker}
+        onClose={() => setShowModelPicker(false)}
+        title="Select Model"
+      >
+        <div className="model-picker-list">
+          {AVAILABLE_MODELS.map((model) => (
+            <div
+              key={model.id}
+              className={`model-picker-item ${codexStatus?.model === model.id ? "selected" : ""}`}
+              onClick={() => void handleSelectModel(model.id)}
+            >
+              <div className="model-picker-item-info">
+                <div className="model-picker-item-name">{model.name}</div>
+                <div className="model-picker-item-desc">{model.description}</div>
+              </div>
+              {codexStatus?.model === model.id ? (
+                <div className="model-picker-item-check">
+                  <CheckIcon />
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
       </BottomSheet>
     </div>
   );

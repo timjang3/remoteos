@@ -444,4 +444,8 @@ export class BrokerClient {
   async respondAgentPrompt(response: AgentPromptResponse) {
     return this.request("agent.prompt.respond", response);
   }
+
+  async setAgentModel(modelId: string) {
+    return this.request("agent.config.setModel", { modelId });
+  }
 }

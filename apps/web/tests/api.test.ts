@@ -155,12 +155,12 @@ describe("api base URL handling", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
       "http://10.0.0.12:8787/bootstrap?clientToken=token_1",
-      undefined
+      expect.objectContaining({ credentials: "include" })
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       "http://192.168.1.25:8787/bootstrap?clientToken=token_1",
-      undefined
+      expect.objectContaining({ credentials: "include" })
     );
     expect(result.baseUrl).toBe("http://192.168.1.25:8787");
     expect(result.data.device.id).toBe("device_1");

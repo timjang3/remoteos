@@ -1,6 +1,6 @@
 import type { AgentItem } from "@remoteos/contracts";
 
-import { isFinalAssistantItem } from "./agentPresentation";
+import { isFinalAssistantItem } from "./agentPresentation.js";
 
 export type PendingAgentSend = {
   id: string;

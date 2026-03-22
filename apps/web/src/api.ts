@@ -53,7 +53,34 @@ export type BootstrapPayload = {
   wsUrl: string;
 };
 
+export type ControlPlaneAuthMode = "none" | "required";
+
+export type HealthPayload = {
+  ok: boolean;
+  now: string;
+  authMode: ControlPlaneAuthMode;
+  googleAuthEnabled: boolean;
+};
+
 const apiBaseUrlStorageKey = "remoteos.controlPlaneBaseUrl";
+let resolvedAuthMode: ControlPlaneAuthMode | null = null;
+let canonicalControlPlaneBaseUrl: string | null = null;
+
+export type DeviceEnrollmentStatus = "pending" | "approved" | "expired";
+
+export type DeviceEnrollmentPayload = {
+  id: string;
+  token: string;
+  deviceId: string;
+  deviceName: string;
+  deviceMode: "hosted" | "direct";
+  status: DeviceEnrollmentStatus;
+  enrollmentUrl: string;
+  expiresAt: string;
+  createdAt: string;
+  approvedAt: string | null;
+  approvedByUserId: string | null;
+};
 
 function normalizeBaseUrl(value: string) {
   return value.replace(/\/$/, "");
@@ -133,25 +160,47 @@ function buildControlPlaneCandidates(baseUrl: string) {
   return [...candidates];
 }
 
+function resolveFetchBaseUrl(baseUrl: string) {
+  return canonicalControlPlaneBaseUrl ?? normalizeBaseUrl(baseUrl);
+}
+
+function shouldAllowFallback(allowFallback?: boolean) {
+  if (allowFallback !== undefined) {
+    return allowFallback;
+  }
+  return resolvedAuthMode !== "required";
+}
+
 async function fetchControlPlaneJson<T>(
   baseUrl: string,
   path: string,
-  init?: RequestInit
+  init?: RequestInit,
+  options?: {
+    allowFallback?: boolean;
+  }
 ): Promise<{ data: T; baseUrl: string }> {
   const attempted: string[] = [];
   let lastError: Error | undefined;
+  const candidates = shouldAllowFallback(options?.allowFallback)
+    ? buildControlPlaneCandidates(resolveFetchBaseUrl(baseUrl))
+    : [resolveFetchBaseUrl(baseUrl)];
 
-  for (const candidate of buildControlPlaneCandidates(baseUrl)) {
+  for (const candidate of candidates) {
     attempted.push(candidate);
 
     try {
-      const response = await fetch(`${candidate}${path}`, init);
+      const response = await fetch(`${candidate}${path}`, {
+        credentials: "include",
+        ...init
+      });
+      const payloadText = await response.text();
+      const payload = payloadText ? JSON.parse(payloadText) : null;
       if (!response.ok) {
-        throw new Error((await response.json()).error ?? `Request failed with ${response.status}`);
+        throw new Error(payload?.error ?? `Request failed with ${response.status}`);
       }
 
       return {
-        data: (await response.json()) as T,
+        data: payload as T,
         baseUrl: candidate
       };
     } catch (error) {
@@ -166,6 +215,15 @@ async function fetchControlPlaneJson<T>(
   throw new Error(
     `Failed to reach control plane. Attempted: ${attempted.join(", ")}${lastError ? ` (${lastError.message})` : ""}`
   );
+}
+
+export function setResolvedControlPlaneAuth(baseUrl: string, authMode: ControlPlaneAuthMode) {
+  canonicalControlPlaneBaseUrl = normalizeBaseUrl(baseUrl);
+  resolvedAuthMode = authMode;
+}
+
+export function getResolvedControlPlaneAuthMode() {
+  return resolvedAuthMode;
 }
 
 export function resolveControlPlaneBaseUrl() {
@@ -245,6 +303,36 @@ export async function claimPairing(baseUrl: string, pairingCode: string, clientN
   });
 }
 
+export async function getHealth(baseUrl: string) {
+  return fetchControlPlaneJson<HealthPayload>(baseUrl, "/health", undefined, {
+    allowFallback: true
+  });
+}
+
+export async function getEnrollment(baseUrl: string, token: string) {
+  return fetchControlPlaneJson<DeviceEnrollmentPayload>(
+    baseUrl,
+    `/devices/enrollments/${encodeURIComponent(token)}`,
+    undefined,
+    {
+      allowFallback: true
+    }
+  );
+}
+
+export async function approveEnrollment(baseUrl: string, token: string) {
+  return fetchControlPlaneJson<DeviceEnrollmentPayload>(
+    baseUrl,
+    `/devices/enrollments/${encodeURIComponent(token)}/approve`,
+    {
+      method: "POST"
+    },
+    {
+      allowFallback: false
+    }
+  );
+}
+
 export async function getBootstrap(
   baseUrl: string,
   clientToken: string
@@ -253,6 +341,31 @@ export async function getBootstrap(
     baseUrl,
     `/bootstrap?clientToken=${encodeURIComponent(clientToken)}`
   );
+}
+
+export async function createWsTicket(
+  baseUrl: string,
+  body:
+    | {
+        type: "host";
+        deviceId: string;
+      }
+    | {
+        type: "client";
+        clientToken: string;
+      }
+) {
+  return fetchControlPlaneJson<{
+    ticket: string;
+    expiresAt: string;
+    wsUrl: string;
+  }>(baseUrl, "/ws/ticket", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
 }
 
 type PendingRequest = {

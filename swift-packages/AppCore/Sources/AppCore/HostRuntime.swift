@@ -24,10 +24,14 @@ public final class HostRuntime: ObservableObject {
     @Published public private(set) var agentItems: [AgentItemPayload] = []
     @Published public private(set) var agentPrompts: [AgentPromptPayload] = []
     @Published public private(set) var hostStatus: HostStatusPayload
+    @Published public private(set) var controlPlaneAuthMode: ControlPlaneAuthMode?
+    @Published public private(set) var pendingEnrollment: DeviceEnrollmentPayload?
+    @Published public private(set) var lastConnectionError: String?
     @Published public private(set) var openAIAPIKeyConfigured = false
     @Published public private(set) var openAIAPIKeyStorageSource: OpenAIAPIKeyStorageSource = .none
 
     private let configurationStore: ConfigurationStore
+    private let keychainTokenStore: KeychainTokenStore
     private let openAIAPIKeyStore: OpenAIAPIKeyStore
     private let permissionCoordinator: PermissionCoordinator
     private let inventoryService: WindowInventoryService
@@ -45,6 +49,8 @@ public final class HostRuntime: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var brokerReconnectTask: Task<Void, Never>?
     private var registrationTask: Task<BrokerRegistration, Error>?
+    private var enrollmentPollingTask: Task<Void, Never>?
+    private var lastOpenedEnrollmentToken: String?
     private var semanticSummaryByWindow: [Int: String] = [:]
     private var latestFrameByWindowID: [Int: CapturedFrame] = [:]
     /// Frames captured by explicit tool calls (select, capture, focus), keyed
@@ -63,6 +69,7 @@ public final class HostRuntime: ObservableObject {
 
     public init(
         configurationStore: ConfigurationStore = ConfigurationStore(),
+        keychainTokenStore: KeychainTokenStore = KeychainTokenStore(),
         openAIAPIKeyStore: OpenAIAPIKeyStore = OpenAIAPIKeyStore(),
         permissionCoordinator: PermissionCoordinator = PermissionCoordinator(),
         screenshotService: ScreenshotService = ScreenshotService(),
@@ -72,8 +79,10 @@ public final class HostRuntime: ObservableObject {
         brokerClient: BrokerClient = BrokerClient(),
         urlSession: URLSession = .shared
     ) throws {
-        let configuration = configurationStore.load()
+        var configuration = configurationStore.load()
+        configuration.deviceSecret = keychainTokenStore.load(.deviceSecret)
         self.configurationStore = configurationStore
+        self.keychainTokenStore = keychainTokenStore
         self.openAIAPIKeyStore = openAIAPIKeyStore
         self.permissionCoordinator = permissionCoordinator
         self.inventoryService = WindowInventoryService(permissionCoordinator: permissionCoordinator)
@@ -239,18 +248,22 @@ public final class HostRuntime: ObservableObject {
         permissions = permissionCoordinator.snapshot()
         hostStatus.screenRecording = permissions.screenRecording
         hostStatus.accessibility = permissions.accessibility
+        lastConnectionError = nil
 
         Task {
             self.log.info("Beginning Codex warm-up")
             _ = await codexClient.prepareForTurns(forceStatusRefresh: true)
             self.log.info("Finished Codex warm-up")
         }
-        log.info("Deferring window enumeration until a local refresh or remote window request needs ScreenCaptureKit.")
+        Task {
+            try? await refreshControlPlaneAuthMode()
+        }
+        log.info("Starting window inventory refresh loop.")
 
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in
             while let self, !Task.isCancelled {
-                if !self.windows.isEmpty || self.selectedWindowID != nil {
+                if self.permissions.screenRecording == .granted || !self.windows.isEmpty || self.selectedWindowID != nil {
                     await self.refreshWindowsNow()
                     await self.publishDeckSnapshots()
                     await self.publishSemanticDiffIfNeeded()
@@ -268,6 +281,8 @@ public final class HostRuntime: ObservableObject {
         refreshTask?.cancel()
         brokerReconnectTask?.cancel()
         brokerReconnectTask = nil
+        enrollmentPollingTask?.cancel()
+        enrollmentPollingTask = nil
         clearAllPrompts(status: .interrupted)
         brokerClient.disconnect()
         Task {
@@ -285,11 +300,19 @@ public final class HostRuntime: ObservableObject {
         configuration.hostMode = mode
         configuration.deviceName = deviceName
         configuration.codexModel = codexModel.isEmpty ? "gpt-5.4-mini" : codexModel
-        configurationStore.save(configuration)
+        persistConfiguration()
         hostStatus.directUrl = mode == .direct ? baseURL : nil
+        controlPlaneAuthMode = nil
+        pendingEnrollment = nil
+        enrollmentPollingTask?.cancel()
+        enrollmentPollingTask = nil
+        lastOpenedEnrollmentToken = nil
 
         Task {
             _ = await codexClient.prepareForTurns(forceStatusRefresh: true)
+        }
+        Task {
+            try? await refreshControlPlaneAuthMode()
         }
     }
 
@@ -325,6 +348,18 @@ public final class HostRuntime: ObservableObject {
         }
     }
 
+    public func openPendingEnrollmentInBrowser() {
+        guard
+            let pendingEnrollment,
+            let url = URL(string: pendingEnrollment.enrollmentUrl)
+        else {
+            return
+        }
+
+        NSWorkspace.shared.open(url)
+        lastOpenedEnrollmentToken = pendingEnrollment.token
+    }
+
     public func createPairingSession() {
         Task { [weak self] in
             guard let self else { return }
@@ -332,16 +367,56 @@ public final class HostRuntime: ObservableObject {
                 self.log.info("Creating pairing session")
                 self.pairingSession = nil
                 let registration = try await self.ensureDeviceRegistration()
+                if registration.isApprovalRequired {
+                    try await self.beginEnrollmentFlow(from: registration)
+                    self.lastConnectionError = nil
+                    return
+                }
+                guard let device = registration.device else {
+                    throw AppCoreError.invalidResponse
+                }
                 self.pairingSession = try await self.requestPairingSession(
-                    deviceID: registration.device.id,
+                    deviceID: device.id,
                     deviceSecret: registration.deviceSecret
                 )
+                self.lastConnectionError = nil
                 self.log.notice("Pairing session ready sessionId=\(self.pairingSession?.id ?? "nil") expiresAt=\(self.pairingSession?.expiresAt ?? "nil")")
             } catch {
+                self.lastConnectionError = error.localizedDescription
                 self.log.error("Failed to create pairing session error=\(error.localizedDescription)")
                 await self.recordTrace(level: "error", kind: "pairing", message: error.localizedDescription)
             }
         }
+    }
+
+    public func logOutHostedDevice() {
+        guard configuration.hostMode == .hosted else {
+            return
+        }
+
+        log.notice("Clearing saved hosted device registration deviceId=\(configuration.deviceID ?? "unregistered")")
+        registrationTask?.cancel()
+        registrationTask = nil
+        brokerReconnectTask?.cancel()
+        brokerReconnectTask = nil
+        enrollmentPollingTask?.cancel()
+        enrollmentPollingTask = nil
+        pairingSession = nil
+        pendingEnrollment = nil
+        lastOpenedEnrollmentToken = nil
+        lastConnectionError = nil
+        configuration.deviceID = nil
+        configuration.deviceSecret = nil
+        persistConfiguration()
+        hostStatus.deviceId = "unregistered"
+        hostStatus.online = false
+        brokerClient.disconnect()
+
+        guard shouldMaintainBrokerConnection else {
+            return
+        }
+
+        scheduleBrokerReconnect(after: .zero)
     }
 
     public func hardStop() {
@@ -385,9 +460,11 @@ public final class HostRuntime: ObservableObject {
                 do {
                     self.log.info("Attempting broker reconnect")
                     try await self.connectBrokerAndRefreshPairing()
+                    self.lastConnectionError = nil
                     self.log.notice("Broker reconnect succeeded")
                     return
                 } catch {
+                    self.lastConnectionError = error.localizedDescription
                     self.log.error("Broker reconnect failed error=\(error.localizedDescription)")
                     await self.recordTrace(level: "error", kind: "broker_connect", message: error.localizedDescription)
                     nextDelay = .seconds(2)
@@ -401,14 +478,37 @@ public final class HostRuntime: ObservableObject {
             return
         }
         let registration = try await ensureDeviceRegistration()
-        try await connectBroker(wsURLString: registration.wsUrl)
-        if Self.shouldRefreshPairingSession(current: pairingSession, deviceID: registration.device.id) {
+        if registration.isApprovalRequired {
+            try await beginEnrollmentFlow(from: registration)
+            return
+        }
+        guard
+            let approvedDevice = registration.device,
+            let deviceID = registration.deviceId ?? registration.device?.id,
+            let wsURL = registration.wsUrl
+        else {
+            throw AppCoreError.invalidResponse
+        }
+        pendingEnrollment = nil
+        enrollmentPollingTask?.cancel()
+        enrollmentPollingTask = nil
+        lastOpenedEnrollmentToken = nil
+        let authMode = try await currentControlPlaneAuthMode()
+        let brokerWSURLString =
+            authMode == .required
+            ? try await requestHostWebSocketTicket(
+                deviceID: deviceID,
+                deviceSecret: registration.deviceSecret
+            ).wsUrl
+            : wsURL
+        try await connectBroker(wsURLString: brokerWSURLString)
+        if Self.shouldRefreshPairingSession(current: pairingSession, deviceID: approvedDevice.id) {
             pairingSession = try await requestPairingSession(
-                deviceID: registration.device.id,
+                deviceID: approvedDevice.id,
                 deviceSecret: registration.deviceSecret
             )
         } else {
-            log.info("Reusing existing pairing session sessionId=\(pairingSession?.id ?? "nil") deviceId=\(registration.device.id)")
+            log.info("Reusing existing pairing session sessionId=\(pairingSession?.id ?? "nil") deviceId=\(approvedDevice.id)")
         }
         await publishHostStatus()
         await publishDeckSnapshots()
@@ -431,6 +531,80 @@ public final class HostRuntime: ObservableObject {
         return expirationDate <= now
     }
 
+    private func persistConfiguration() {
+        configurationStore.save(configuration)
+        keychainTokenStore.save(configuration.deviceSecret, for: .deviceSecret)
+    }
+
+    private func beginEnrollmentFlow(from registration: BrokerRegistration) async throws {
+        guard
+            registration.isApprovalRequired,
+            let deviceID = registration.deviceId,
+            let enrollmentUrl = registration.enrollmentUrl,
+            let enrollmentToken = registration.enrollmentToken,
+            let expiresAt = registration.expiresAt
+        else {
+            throw AppCoreError.invalidResponse
+        }
+
+        pendingEnrollment = DeviceEnrollmentPayload(
+            id: enrollmentToken,
+            token: enrollmentToken,
+            deviceId: deviceID,
+            deviceName: configuration.deviceName,
+            deviceMode: configuration.hostMode,
+            status: .pending,
+            enrollmentUrl: enrollmentUrl,
+            expiresAt: expiresAt,
+            createdAt: isoNow(),
+            approvedAt: nil,
+            approvedByUserId: nil
+        )
+        pairingSession = nil
+        hostStatus.online = false
+        if lastOpenedEnrollmentToken != enrollmentToken, let url = URL(string: enrollmentUrl) {
+            NSWorkspace.shared.open(url)
+            lastOpenedEnrollmentToken = enrollmentToken
+        }
+        startEnrollmentPolling(token: enrollmentToken)
+    }
+
+    private func refreshControlPlaneAuthMode() async throws -> ControlPlaneAuthMode {
+        let request = URLRequest(url: URL(string: "\(configuration.controlPlaneBaseURL)/health")!)
+        let (data, response) = try await urlSession.data(for: request)
+        try Self.assertSuccessfulHTTPResponse(data: data, response: response)
+        let health = try JSONDecoder().decode(ControlPlaneHealthPayload.self, from: data)
+        controlPlaneAuthMode = health.authMode
+        return health.authMode
+    }
+
+    private func currentControlPlaneAuthMode() async throws -> ControlPlaneAuthMode {
+        if let controlPlaneAuthMode {
+            return controlPlaneAuthMode
+        }
+        return try await refreshControlPlaneAuthMode()
+    }
+
+    private func requestHostWebSocketTicket(
+        deviceID: String,
+        deviceSecret: String
+    ) async throws -> WebSocketTicketPayload {
+        let requestBody = [
+            "type": "host",
+            "deviceId": deviceID,
+            "deviceSecret": deviceSecret,
+        ]
+        let data = try JSONEncoder().encode(requestBody)
+        var request = URLRequest(url: URL(string: "\(configuration.controlPlaneBaseURL)/ws/ticket")!)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "content-type")
+        request.httpBody = data
+
+        let (responseData, response) = try await urlSession.data(for: request)
+        try Self.assertSuccessfulHTTPResponse(data: responseData, response: response)
+        return try JSONDecoder().decode(WebSocketTicketPayload.self, from: responseData)
+    }
+
     @discardableResult
     func ensureDeviceRegistration() async throws -> BrokerRegistration {
         if let registrationTask {
@@ -438,11 +612,11 @@ public final class HostRuntime: ObservableObject {
             return try await registrationTask.value
         }
 
-        let request = try makeRegisterRequest()
         let clock = ContinuousClock()
         let startedAt = clock.now
         log.info("Registering device baseUrl=\(configuration.controlPlaneBaseURL) existingDeviceId=\(configuration.deviceID ?? "nil")")
-        let registrationTask = Task<BrokerRegistration, Error> { [urlSession] in
+        let registrationTask = Task<BrokerRegistration, Error> { [self, urlSession] in
+            let request = try await makeRegisterRequest()
             let (data, response) = try await urlSession.data(for: request)
             try Self.assertSuccessfulHTTPResponse(data: data, response: response)
             return try JSONDecoder().decode(BrokerRegistration.self, from: data)
@@ -453,22 +627,35 @@ public final class HostRuntime: ObservableObject {
         }
 
         let registration = try await registrationTask.value
-        configuration.deviceID = registration.device.id
+        configuration.deviceID = registration.deviceId ?? registration.device?.id
         configuration.deviceSecret = registration.deviceSecret
-        configurationStore.save(configuration)
-        hostStatus.deviceId = registration.device.id
-        log.notice("Device registration ready deviceId=\(registration.device.id) elapsed=\(logDuration(startedAt.duration(to: clock.now)))")
+        persistConfiguration()
+        hostStatus.deviceId = registration.deviceId ?? registration.device?.id ?? "unregistered"
+        lastConnectionError = nil
+        log.notice("Device registration ready deviceId=\(registration.deviceId ?? registration.device?.id ?? "unregistered") elapsed=\(logDuration(startedAt.duration(to: clock.now)))")
         return registration
     }
 
-    private func makeRegisterRequest() throws -> URLRequest {
+    private func makeRegisterRequest() async throws -> URLRequest {
         var body: [String: Any] = [
             "name": configuration.deviceName,
             "mode": configuration.hostMode.rawValue
         ]
-        if let existingDeviceID = configuration.deviceID, let existingDeviceSecret = configuration.deviceSecret {
+        let existingDeviceID = configuration.deviceID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let existingDeviceSecret = configuration.deviceSecret?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let existingDeviceID, !existingDeviceID.isEmpty {
+            guard let existingDeviceSecret, !existingDeviceSecret.isEmpty else {
+                throw AppCoreError.missingConfiguration(
+                    "Stored device registration is incomplete. RemoteOS will not create a replacement device automatically; clear the saved registration and pair this Mac again."
+                )
+            }
             body["existingDeviceId"] = existingDeviceID
             body["existingDeviceSecret"] = existingDeviceSecret
+        } else if let existingDeviceSecret, !existingDeviceSecret.isEmpty {
+            throw AppCoreError.missingConfiguration(
+                "Stored device secret exists without a device ID. Clear the saved registration and pair this Mac again."
+            )
         }
         var request = URLRequest(url: URL(string: "\(configuration.controlPlaneBaseURL)/devices/register")!)
         request.httpMethod = "POST"
@@ -495,13 +682,67 @@ public final class HostRuntime: ObservableObject {
             if case let AppCoreError.invalidPayload(message) = error, message.contains("Unauthorized device") {
                 log.warning("Pairing request unauthorized; refreshing device registration")
                 let refreshedRegistration = try await ensureDeviceRegistration()
+                guard let refreshedDeviceID = refreshedRegistration.deviceId ?? refreshedRegistration.device?.id else {
+                    throw AppCoreError.invalidResponse
+                }
                 return try await performPairingRequest(
-                    deviceID: refreshedRegistration.device.id,
+                    deviceID: refreshedDeviceID,
                     deviceSecret: refreshedRegistration.deviceSecret
                 )
             }
             throw error
         }
+    }
+
+    private func startEnrollmentPolling(token: String) {
+        if enrollmentPollingTask != nil, pendingEnrollment?.token == token {
+            return
+        }
+
+        enrollmentPollingTask?.cancel()
+        enrollmentPollingTask = Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            defer {
+                self.enrollmentPollingTask = nil
+            }
+
+            while self.shouldMaintainBrokerConnection, !Task.isCancelled {
+                do {
+                    let enrollment = try await self.requestEnrollmentStatus(token: token)
+                    self.pendingEnrollment = enrollment
+                    switch enrollment.status {
+                    case .approved:
+                        self.pendingEnrollment = nil
+                        self.lastConnectionError = nil
+                        self.lastOpenedEnrollmentToken = nil
+                        self.scheduleBrokerReconnect(after: .zero)
+                        return
+                    case .expired:
+                        self.lastConnectionError = "Authorization timed out. Open the sign-in page again from the Mac app."
+                        return
+                    case .pending:
+                        break
+                    }
+                } catch {
+                    self.lastConnectionError = error.localizedDescription
+                    return
+                }
+
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    private func requestEnrollmentStatus(token: String) async throws -> DeviceEnrollmentPayload {
+        let request = URLRequest(
+            url: URL(string: "\(configuration.controlPlaneBaseURL)/devices/enrollments/\(token)")!
+        )
+        let (data, response) = try await urlSession.data(for: request)
+        try Self.assertSuccessfulHTTPResponse(data: data, response: response)
+        return try JSONDecoder().decode(DeviceEnrollmentPayload.self, from: data)
     }
 
     private func performPairingRequest(deviceID: String, deviceSecret: String) async throws -> PairingSessionPayload {
@@ -822,7 +1063,7 @@ public final class HostRuntime: ObservableObject {
             }
             log.info("Setting codex model to \(modelId)")
             configuration.codexModel = modelId
-            configurationStore.save(configuration)
+            persistConfiguration()
             await brokerClient.sendSuccess(id: request.id ?? UUID().uuidString, payload: ["ok": true])
             Task {
                 _ = await codexClient.prepareForTurns(forceStatusRefresh: true)

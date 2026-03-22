@@ -42,11 +42,14 @@ function formatElapsed(seconds: number) {
 import {
   BrokerClient,
   claimPairing,
+  createWsTicket,
   getBootstrap,
+  getResolvedControlPlaneAuthMode,
   resolveBrokerWebSocketUrl,
   resolveControlPlaneBaseUrl,
   storeControlPlaneBaseUrl
 } from "./api.js";
+import { createControlPlaneAuthClient } from "./authClient.js";
 
 import { BottomSheet } from "./components/BottomSheet.js";
 import {
@@ -60,6 +63,12 @@ import {
   buildDisplayedTranscript,
   type PendingAgentSend
 } from "./chatState.js";
+import {
+  clearStoredToken,
+  getStoredToken,
+  logoutWebSession,
+  setStoredToken
+} from "./session.js";
 import "./app.css";
 
 const AVAILABLE_MODELS = [
@@ -82,19 +91,72 @@ function getModelDisplayName(modelId: string | null | undefined): string {
   return MODEL_DISPLAY[modelId] ?? modelId;
 }
 
-function getStoredToken() {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem("remoteos.clientToken");
+/**
+ * Convert a base64-encoded frame to an object URL.
+ * Object URLs are far cheaper for the browser to render than data URLs
+ * because the browser doesn't need to re-parse megabytes of base64 on
+ * every img src change.
+ */
+function frameToObjectUrl(frame: WindowFrame): string {
+  const binary = atob(frame.dataBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const blob = new Blob([bytes], { type: frame.mimeType });
+  return URL.createObjectURL(blob);
 }
 
-function clearStoredToken() {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem("remoteos.clientToken");
-}
+/**
+ * Hook that converts incoming WindowFrames to object URLs, throttled to
+ * the display refresh rate so we never queue more React re-renders than
+ * the screen can paint.  Revokes stale URLs to prevent memory leaks.
+ */
+function useThrottledFrameUrl(frame: WindowFrame | undefined): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  const prevUrlRef = useRef<string | null>(null);
+  const pendingFrameRef = useRef<WindowFrame | undefined>(undefined);
+  const rafIdRef = useRef<number>(0);
 
-function getFrameDataUrl(frame?: WindowFrame) {
-  if (!frame) return null;
-  return `data:${frame.mimeType};base64,${frame.dataBase64}`;
+  useEffect(() => {
+    if (!frame) {
+      if (prevUrlRef.current) {
+        URL.revokeObjectURL(prevUrlRef.current);
+        prevUrlRef.current = null;
+      }
+      setUrl(null);
+      return;
+    }
+
+    // Stash the latest frame; the RAF callback always processes the newest one.
+    pendingFrameRef.current = frame;
+
+    if (rafIdRef.current) return; // already scheduled
+
+    rafIdRef.current = requestAnimationFrame(() => {
+      rafIdRef.current = 0;
+      const pending = pendingFrameRef.current;
+      if (!pending) return;
+      pendingFrameRef.current = undefined;
+
+      const nextUrl = frameToObjectUrl(pending);
+      if (prevUrlRef.current) {
+        URL.revokeObjectURL(prevUrlRef.current);
+      }
+      prevUrlRef.current = nextUrl;
+      setUrl(nextUrl);
+    });
+  }, [frame]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
+      if (prevUrlRef.current) URL.revokeObjectURL(prevUrlRef.current);
+    };
+  }, []);
+
+  return url;
 }
 
 export function isInvalidClientError(message: string) {
@@ -198,6 +260,15 @@ function XIcon() {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
       <line x1="18" y1="6" x2="6" y2="18" />
       <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
+function PersonIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
     </svg>
   );
 }
@@ -484,7 +555,7 @@ function PromptCard({
 
       {prompt.questions.length > 0 ? (
         <div className="agent-prompt-questions">
-          {prompt.questions.map((question) => {
+          {prompt.questions.map((question: AgentPrompt["questions"][number]) => {
             const selectedValue = selectedOptions[question.id] ?? "";
             const showTextInput = !question.options?.length || selectedValue === "__other__";
 
@@ -509,7 +580,7 @@ function PromptCard({
                     }}
                   >
                     <option value="">Select an option</option>
-                    {question.options.map((option) => (
+                    {question.options.map((option: NonNullable<AgentPrompt["questions"][number]["options"]>[number]) => (
                       <option key={option.label} value={option.label}>
                         {option.label}
                       </option>
@@ -552,7 +623,7 @@ function PromptCard({
 
       {prompt.choices?.length ? (
         <div className="agent-prompt-actions">
-          {prompt.choices.map((choice) => (
+          {prompt.choices.map((choice: NonNullable<AgentPrompt["choices"]>[number]) => (
             <button
               key={choice.id}
               className={`agent-prompt-button ${choice.id === "accept" ? "agent-prompt-button-primary" : ""}`}
@@ -597,18 +668,54 @@ export function App() {
 
   const [showWindows, setShowWindows] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
+  const [showAccount, setShowAccount] = useState(false);
   const [isAgentStartPending, startAgentStartTransition] = useTransition();
 
+  const authClient = useMemo(
+    () => createControlPlaneAuthClient(controlPlaneBaseUrl),
+    [controlPlaneBaseUrl]
+  );
+  const session = authClient.useSession();
   const clientRef = useRef<BrokerClient | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
-  const tokenKey = "remoteos.clientToken";
 
   const selectedWindow = useMemo(
     () => windows.find((window) => window.id === selectedWindowId) ?? null,
     [selectedWindowId, windows]
   );
-  const frameUrl = getFrameDataUrl(frame);
+  const frameUrl = useThrottledFrameUrl(frame);
+
+  // Pre-compute blob URLs for snapshot thumbnails to avoid inline base64 data URLs
+  const snapshotUrlsRef = useRef<Record<number, string>>({});
+  const snapshotUrls = useMemo(() => {
+    const next: Record<number, string> = {};
+    for (const [idStr, snapshot] of Object.entries(snapshots)) {
+      const id = Number(idStr);
+      // Reuse existing blob URL if the snapshot hasn't changed (same capturedAt)
+      const existing = snapshotUrlsRef.current[id];
+      if (existing) {
+        // We can't easily compare — just revoke and recreate.
+        // Snapshots update infrequently so this is fine.
+        URL.revokeObjectURL(existing);
+      }
+      const binary = atob(snapshot.dataBase64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: snapshot.mimeType });
+      next[id] = URL.createObjectURL(blob);
+    }
+    // Revoke any URLs for windows that no longer have snapshots
+    for (const [idStr, url] of Object.entries(snapshotUrlsRef.current)) {
+      if (!(Number(idStr) in next)) {
+        URL.revokeObjectURL(url);
+      }
+    }
+    snapshotUrlsRef.current = next;
+    return next;
+  }, [snapshots]);
 
   const transcript = useMemo(
     () => buildDisplayedTranscript(agentItems, pendingAgentSend),
@@ -638,10 +745,9 @@ export function App() {
     [codexStatus]
   );
 
-  const resetExpiredSession = useCallback((message: string) => {
+  const clearClientSessionState = useCallback(() => {
     clientRef.current?.disconnect();
     clientRef.current = null;
-    clearStoredToken();
     setWindows([]);
     setSelectedWindowId(null);
     setFrame(undefined);
@@ -658,9 +764,15 @@ export function App() {
     setCodexStatus(null);
     setTraceEvents([]);
     setShowWindows(false);
+    setShowModelPicker(false);
     setConnectionState("idle");
-    setError(message);
   }, []);
+
+  const resetExpiredSession = useCallback((message: string) => {
+    clearStoredToken();
+    clearClientSessionState();
+    setError(message);
+  }, [clearClientSessionState]);
 
   useEffect(() => {
     const token = getStoredToken();
@@ -682,8 +794,20 @@ export function App() {
         setCodexStatus(payload.status.codex);
         setSelectedWindowId(payload.status.selectedWindowId ?? null);
         setConnectionState("connecting");
+        const authMode = getResolvedControlPlaneAuthMode();
+        const wsTicketResult =
+          authMode === "required"
+            ? await createWsTicket(bootstrapResult.baseUrl, {
+                type: "client",
+                clientToken: token!
+              })
+            : null;
+        const wsUrl = wsTicketResult?.data.wsUrl ?? payload.wsUrl;
+        if (wsTicketResult) {
+          storeControlPlaneBaseUrl(wsTicketResult.baseUrl);
+        }
 
-        const broker = new BrokerClient(resolveBrokerWebSocketUrl(payload.wsUrl), {
+        const broker = new BrokerClient(resolveBrokerWebSocketUrl(wsUrl), {
           windows(updated) {
             setWindows(updated);
           },
@@ -821,7 +945,7 @@ export function App() {
       );
       storeControlPlaneBaseUrl(result.baseUrl);
       if (typeof window !== "undefined") {
-        window.localStorage.setItem(tokenKey, result.data.clientToken);
+        setStoredToken(result.data.clientToken);
         window.location.reload();
       }
     } catch (err) {
@@ -954,13 +1078,22 @@ export function App() {
     }
   }
 
-  function handleDisconnect() {
-    clearStoredToken();
-    window.location.reload();
+  async function handleDisconnect() {
+    setError(null);
+    setChatError(null);
+    clearClientSessionState();
+
+    try {
+      await logoutWebSession(authClient);
+      window.location.assign(window.location.pathname);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to log out");
+    }
   }
 
   const isConnected = connectionState === "connected";
   const hasToken = !!getStoredToken();
+  const requiresControlPlaneSignIn = getResolvedControlPlaneAuthMode() === "required";
   const isCodexReady =
     codexStatus?.state === "ready" ||
     codexStatus?.state === "running";
@@ -1032,6 +1165,15 @@ export function App() {
             </button>
             <button className="chat-header-btn" onClick={openWindowsSheet}>
               <WindowsIcon />
+            </button>
+            <button className="chat-header-btn" onClick={() => setShowAccount(true)} aria-label="Account">
+              {requiresControlPlaneSignIn && session.data?.user ? (
+                <span className="account-btn-initial">
+                  {(session.data.user.name || session.data.user.email || "U")[0]!.toUpperCase()}
+                </span>
+              ) : (
+                <PersonIcon />
+              )}
             </button>
           </div>
         </div>
@@ -1170,19 +1312,17 @@ export function App() {
                 className={`window-item ${selectedWindowId === window.id ? "selected" : ""}`}
                 onClick={() => void handleSelectWindow(window.id)}
               >
-                {(() => {
-                  const snapshot = snapshots[window.id];
-                  return snapshot ? (
-                    <img
-                      className="window-item-thumb"
-                      src={`data:${snapshot.mimeType};base64,${snapshot.dataBase64}`}
-                      alt={window.title}
-                      draggable={false}
-                    />
-                  ) : (
-                    <div className="window-item-thumb" />
-                  );
-                })()}
+                {snapshotUrls[window.id] ? (
+                  <img
+                    className="window-item-thumb"
+                    src={snapshotUrls[window.id]}
+                    alt={window.title}
+                    draggable={false}
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="window-item-thumb" />
+                )}
                 <div className="window-item-info">
                   <span className="window-item-title">{window.title}</span>
                   <span className="window-item-app">{window.ownerName}</span>
@@ -1197,22 +1337,6 @@ export function App() {
           </div>
         )}
 
-        <button
-          onClick={handleDisconnect}
-          style={{
-            width: "100%",
-            marginTop: 24,
-            padding: "12px 16px",
-            borderRadius: "var(--radius-md)",
-            background: "rgba(248, 113, 113, 0.08)",
-            color: "var(--danger)",
-            fontSize: 14,
-            fontWeight: 600,
-            border: "1px solid rgba(248, 113, 113, 0.15)"
-          }}
-        >
-          Disconnect
-        </button>
       </BottomSheet>
 
       <BottomSheet
@@ -1239,6 +1363,42 @@ export function App() {
             </div>
           ))}
         </div>
+      </BottomSheet>
+
+      <BottomSheet
+        open={showAccount}
+        onClose={() => setShowAccount(false)}
+        title="Account"
+      >
+        {requiresControlPlaneSignIn && session.data?.user ? (
+          <div className="account-user-info">
+            <div className="account-user-avatar">
+              {(session.data.user.name || session.data.user.email || "U")[0]!.toUpperCase()}
+            </div>
+            <div>
+              {session.data.user.name ? (
+                <div className="account-user-name">{session.data.user.name}</div>
+              ) : null}
+              <div className="account-user-email">{session.data.user.email}</div>
+            </div>
+          </div>
+        ) : (
+          <div className="account-user-info">
+            <div className="account-user-avatar">
+              {(clientName || "P")[0]!.toUpperCase()}
+            </div>
+            <div>
+              <div className="account-user-name">{clientName || "Phone"}</div>
+              <div className="account-user-email">Connected to Mac</div>
+            </div>
+          </div>
+        )}
+        <button
+          className="account-signout-btn"
+          onClick={() => { setShowAccount(false); void handleDisconnect(); }}
+        >
+          {requiresControlPlaneSignIn ? "Sign out" : "Disconnect"}
+        </button>
       </BottomSheet>
     </div>
   );

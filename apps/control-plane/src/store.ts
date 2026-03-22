@@ -1,103 +1,123 @@
 import type {
   Device,
   PairingSession,
-  WindowDescriptor
 } from "@remoteos/contracts";
-import { customAlphabet, nanoid } from "nanoid";
-import type WebSocket from "ws";
+import { nanoid } from "nanoid";
 
-import { hostStatusSchema, windowDescriptorSchema } from "@remoteos/contracts";
-import { z } from "zod";
-
-type HostStatus = typeof hostStatusSchema._type;
-
-export type DeviceRegistration = {
-  device: Device;
-  deviceSecret: string;
-};
-
-export type ClientSession = {
-  id: string;
-  token: string;
-  deviceId: string;
-  name: string;
-};
-
-type DeviceRecord = DeviceRegistration & {
-  hostSocket: WebSocket | undefined;
-  status: HostStatus | undefined;
-  windows: WindowDescriptor[];
-  clients: Map<string, ClientSession & { socket: WebSocket | undefined }>;
-};
+import type {
+  BrokerStore,
+  ClientSession,
+  DeviceEnrollment,
+  DeviceRegistrationResult
+} from "./storeInterface.js";
+import { BrokerRuntimeState } from "./storeRuntime.js";
 
 type PairingRecord = PairingSession & {
   clientToken?: string;
   clientName?: string;
 };
 
-export class MemoryBrokerStore {
-  private readonly devices = new Map<string, DeviceRecord>();
-
+export class MemoryBrokerStore extends BrokerRuntimeState implements BrokerStore {
   private readonly pairingsByCode = new Map<string, PairingRecord>();
 
   private readonly pairingsById = new Map<string, PairingRecord>();
 
-  private readonly clientSessions = new Map<string, ClientSession>();
+  private readonly enrollmentsByToken = new Map<string, DeviceEnrollment>();
 
-  private readonly pairingCode = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 6);
+  private readonly enrollmentsById = new Map<string, DeviceEnrollment>();
 
-  private defaultHostStatus(deviceId: string, online: boolean): HostStatus {
-    return {
-      deviceId,
-      online,
-      selectedWindowId: null,
-      screenRecording: "unknown",
-      accessibility: "unknown",
-      directUrl: null,
-      codex: {
-        state: "unknown",
-        installed: false,
-        authenticated: false,
-        authMode: null,
-        model: null,
-        threadId: null,
-        activeTurnId: null,
-        lastError: null
+  private serializeEnrollment(record: DeviceEnrollment) {
+    const device = this.devices.get(record.deviceId);
+    if (device) {
+      record.deviceName = device.device.name;
+      record.deviceMode = device.device.mode;
+    }
+    if (record.status === "pending" && new Date(record.expiresAt).getTime() <= Date.now()) {
+      record.status = "expired";
+    }
+    return record;
+  }
+
+  private createEnrollment(
+    deviceId: string,
+    publicEnrollmentBaseUrl: string
+  ): DeviceEnrollment {
+    const device = this.devices.get(deviceId);
+    if (!device) {
+      throw new Error("Unknown device");
+    }
+
+    for (const enrollment of this.enrollmentsById.values()) {
+      if (enrollment.deviceId === deviceId && enrollment.status === "pending") {
+        enrollment.status = "expired";
       }
+    }
+
+    const token = nanoid(32);
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 15).toISOString();
+    const enrollmentUrl = this.buildEnrollmentUrl(publicEnrollmentBaseUrl, token);
+    const enrollment: DeviceEnrollment = {
+      id: nanoid(),
+      token,
+      deviceId,
+      deviceName: device.device.name,
+      deviceMode: device.device.mode,
+      status: "pending",
+      enrollmentUrl,
+      expiresAt,
+      createdAt: new Date().toISOString(),
+      approvedAt: null,
+      approvedByUserId: null
     };
+
+    this.enrollmentsByToken.set(token, enrollment);
+    this.enrollmentsById.set(enrollment.id, enrollment);
+    return enrollment;
   }
 
-  private currentHostStatus(record: DeviceRecord): HostStatus {
-    const status = record.status ?? this.defaultHostStatus(record.device.id, record.device.online);
-
-    return {
-      ...status,
-      deviceId: record.device.id,
-      online: record.device.online,
-      selectedWindowId: record.device.online ? status.selectedWindowId : null
-    };
-  }
-
-  registerDevice(input: {
+  async registerDevice(input: {
     name: string;
     mode: Device["mode"];
     existingDeviceId?: string;
     existingDeviceSecret?: string;
-  }): DeviceRegistration {
-    if (input.existingDeviceId && input.existingDeviceSecret) {
+    userId?: string | null;
+    publicEnrollmentBaseUrl?: string;
+  }): Promise<DeviceRegistrationResult> {
+    if (input.existingDeviceId) {
       const existing = this.devices.get(input.existingDeviceId);
 
-      if (existing && existing.deviceSecret === input.existingDeviceSecret) {
-        existing.device = {
-          ...existing.device,
-          name: input.name,
-          mode: input.mode
-        };
+      if (!input.existingDeviceSecret || !existing || existing.deviceSecret !== input.existingDeviceSecret) {
+        throw new Error("Unauthorized device");
+      }
+
+      if (input.userId && existing.userId && existing.userId !== input.userId) {
+        throw new Error("Unauthorized device");
+      }
+      existing.device = {
+        ...existing.device,
+        name: input.name,
+        mode: input.mode
+      };
+      existing.userId = input.userId ?? existing.userId;
+      if (input.publicEnrollmentBaseUrl && !existing.userId) {
+        const enrollment = this.createEnrollment(existing.device.id, input.publicEnrollmentBaseUrl);
         return {
-          device: existing.device,
-          deviceSecret: existing.deviceSecret
+          approvalRequired: true,
+          deviceId: existing.device.id,
+          deviceSecret: existing.deviceSecret,
+          enrollmentUrl: enrollment.enrollmentUrl,
+          enrollmentToken: enrollment.token,
+          expiresAt: enrollment.expiresAt
         };
       }
+      return {
+        device: existing.device,
+        deviceSecret: existing.deviceSecret
+      };
+    }
+
+    if (input.existingDeviceSecret) {
+      throw new Error("Unauthorized device");
     }
 
     const id = nanoid();
@@ -112,14 +132,23 @@ export class MemoryBrokerStore {
       lastSeenAt: null
     };
 
-    this.devices.set(id, {
+    this.ensureRuntimeDevice({
       device,
       deviceSecret,
-      hostSocket: undefined,
-      status: undefined,
-      windows: [],
-      clients: new Map()
+      userId: input.userId ?? null
     });
+
+    if (input.publicEnrollmentBaseUrl) {
+      const enrollment = this.createEnrollment(id, input.publicEnrollmentBaseUrl);
+      return {
+        approvalRequired: true,
+        deviceId: id,
+        deviceSecret,
+        enrollmentUrl: enrollment.enrollmentUrl,
+        enrollmentToken: enrollment.token,
+        expiresAt: enrollment.expiresAt
+      };
+    }
 
     return {
       device,
@@ -127,41 +156,102 @@ export class MemoryBrokerStore {
     };
   }
 
-  getDevice(deviceId: string) {
-    return this.devices.get(deviceId);
+  async getEnrollment(token: string) {
+    const enrollment = this.enrollmentsByToken.get(token);
+    if (!enrollment) {
+      return undefined;
+    }
+
+    return this.serializeEnrollment(enrollment);
   }
 
-  createPairing(input: {
+  async approveEnrollment(token: string, userId: string) {
+    const enrollment = this.enrollmentsByToken.get(token);
+    if (!enrollment) {
+      throw new Error("Enrollment token not found");
+    }
+    this.serializeEnrollment(enrollment);
+
+    if (enrollment.status === "expired") {
+      throw new Error("Enrollment token expired");
+    }
+    if (enrollment.status === "approved") {
+      if (enrollment.approvedByUserId !== userId) {
+        throw new Error("Enrollment token already approved");
+      }
+      return enrollment;
+    }
+
+    const device = this.devices.get(enrollment.deviceId);
+    if (!device) {
+      throw new Error("Unknown device");
+    }
+    if (device.userId && device.userId !== userId) {
+      throw new Error("Device already belongs to another user");
+    }
+
+    device.userId = userId;
+    enrollment.status = "approved";
+    enrollment.approvedAt = new Date().toISOString();
+    enrollment.approvedByUserId = userId;
+
+    for (const other of this.enrollmentsById.values()) {
+      if (other.deviceId === enrollment.deviceId && other.id !== enrollment.id && other.status === "pending") {
+        other.status = "expired";
+      }
+    }
+
+    return enrollment;
+  }
+
+  async getPersistedDevice(deviceId: string) {
+    const device = this.devices.get(deviceId);
+    if (!device) {
+      return undefined;
+    }
+
+    return {
+      device: device.device,
+      deviceSecret: device.deviceSecret,
+      userId: device.userId
+    };
+  }
+
+  async createPairing(input: {
     deviceId: string;
     deviceSecret: string;
     publicPairBaseUrl: string;
-  }): PairingSession {
+    userId?: string | null;
+    requireOwnership?: boolean;
+  }) {
     const record = this.devices.get(input.deviceId);
     if (!record || record.deviceSecret !== input.deviceSecret) {
       throw new Error("Unauthorized device");
     }
+    if (input.requireOwnership && !record.userId) {
+      throw new Error("Device approval required");
+    }
+    if (input.userId && record.userId && record.userId !== input.userId) {
+      throw new Error("Unauthorized device");
+    }
 
-    const pairingURL = new URL(input.publicPairBaseUrl);
-    pairingURL.searchParams.set("code", this.pairingCode());
+    const pairingCode = this.pairingCode();
 
     const session: PairingRecord = {
       id: nanoid(),
       deviceId: record.device.id,
-      pairingCode: pairingURL.searchParams.get("code")!,
+      pairingCode,
       claimed: false,
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 1000 * 60 * 15).toISOString(),
-      pairingUrl: pairingURL.toString()
+      pairingUrl: this.buildPairingUrl(input.publicPairBaseUrl, pairingCode)
     };
     this.pairingsByCode.set(session.pairingCode, session);
     this.pairingsById.set(session.id, session);
     return session;
   }
 
-  claimPairing(pairingCode: string, clientName: string): {
-    pairing: PairingSession;
-    clientToken: string;
-  } {
+  async claimPairing(pairingCode: string, clientName: string, userId?: string | null) {
     const pairing = this.pairingsByCode.get(pairingCode);
     if (!pairing) {
       throw new Error("Pairing code not found");
@@ -173,6 +263,14 @@ export class MemoryBrokerStore {
       throw new Error("Pairing code expired");
     }
 
+    const device = this.devices.get(pairing.deviceId);
+    if (!device) {
+      throw new Error("Unknown device");
+    }
+    if (userId && device.userId && device.userId !== userId) {
+      throw new Error("Unauthorized pairing");
+    }
+
     const clientToken = nanoid(28);
     pairing.claimed = true;
     pairing.clientToken = clientToken;
@@ -182,13 +280,10 @@ export class MemoryBrokerStore {
       id: nanoid(),
       token: clientToken,
       deviceId: pairing.deviceId,
-      name: clientName
+      name: clientName,
+      userId: userId ?? device.userId
     };
-    this.clientSessions.set(clientToken, clientSession);
-    this.devices.get(pairing.deviceId)?.clients.set(clientSession.id, {
-      ...clientSession,
-      socket: undefined
-    });
+    this.cacheClientSession(clientSession);
 
     return {
       pairing,
@@ -196,147 +291,19 @@ export class MemoryBrokerStore {
     };
   }
 
-  getClientSession(token: string) {
+  async getClientSession(token: string) {
     return this.clientSessions.get(token);
   }
 
-  attachHost(deviceId: string, socket: WebSocket) {
-    const record = this.devices.get(deviceId);
-    if (!record) {
-      throw new Error("Unknown device");
-    }
-
-    if (record.hostSocket && record.hostSocket !== socket) {
-      record.hostSocket.close(4000, "Replaced by a newer host session");
-    }
-    record.hostSocket = socket;
-    record.device.online = true;
-    record.device.lastSeenAt = new Date().toISOString();
-    if (record.status) {
-      record.status = this.currentHostStatus(record);
-    }
-  }
-
-  detachHost(deviceId: string) {
-    this.detachHostSocket(deviceId);
-  }
-
-  detachHostSocket(deviceId: string, socket?: WebSocket) {
-    const record = this.devices.get(deviceId);
-    if (!record) {
-      return;
-    }
-    if (socket && record.hostSocket !== socket) {
-      return;
-    }
-
-    record.hostSocket = undefined;
-    record.device.online = false;
-    record.device.lastSeenAt = new Date().toISOString();
-    if (record.status) {
-      record.status = this.currentHostStatus(record);
-    }
-  }
-
-  attachClient(token: string, socket: WebSocket) {
+  async getBootstrap(token: string, userId?: string | null) {
     const session = this.clientSessions.get(token);
     if (!session) {
       throw new Error("Unknown client");
     }
-    const device = this.devices.get(session.deviceId);
-    if (!device) {
-      throw new Error("Unknown device");
-    }
-    const current = device.clients.get(session.id);
-    if (!current) {
-      throw new Error("Unknown client record");
+    if (userId && session.userId && session.userId !== userId) {
+      throw new Error("Unauthorized client");
     }
 
-    device.clients.set(session.id, {
-      ...current,
-      socket
-    });
-    return {
-      session,
-      device
-    };
-  }
-
-  detachClient(token: string) {
-    this.detachClientSocket(token);
-  }
-
-  detachClientSocket(token: string, socket?: WebSocket) {
-    const session = this.clientSessions.get(token);
-    if (!session) {
-      return;
-    }
-    const device = this.devices.get(session.deviceId);
-    if (!device) {
-      return;
-    }
-
-    const current = device.clients.get(session.id);
-    if (!current) {
-      return;
-    }
-    if (socket && current.socket !== socket) {
-      return;
-    }
-
-    device.clients.set(session.id, {
-      ...current,
-      socket: undefined
-    });
-  }
-
-  updateWindows(deviceId: string, windows: unknown) {
-    const record = this.devices.get(deviceId);
-    if (!record) {
-      return;
-    }
-    record.windows = z.array(windowDescriptorSchema).parse(windows);
-  }
-
-  updateHostStatus(deviceId: string, status: unknown) {
-    const parsed = hostStatusSchema.parse(status);
-    const record = this.devices.get(deviceId);
-    if (!record) {
-      return;
-    }
-    record.status = {
-      ...parsed,
-      deviceId: record.device.id,
-      online: record.device.online
-    };
-  }
-
-  getBootstrap(token: string, publicWsBaseUrl: string) {
-    const session = this.clientSessions.get(token);
-    if (!session) {
-      throw new Error("Unknown client");
-    }
-    const device = this.devices.get(session.deviceId);
-    if (!device) {
-      throw new Error("Unknown device");
-    }
-
-    return {
-      client: session,
-      device: device.device,
-      windows: device.windows,
-      status: this.currentHostStatus(device),
-      wsUrl: `${publicWsBaseUrl}/ws/client?clientToken=${token}`
-    };
-  }
-
-  getConnectedClientSockets(deviceId: string) {
-    const record = this.devices.get(deviceId);
-    if (!record) {
-      return [];
-    }
-    return [...record.clients.values()]
-      .map((client) => client.socket)
-      .filter((socket): socket is WebSocket => Boolean(socket));
+    return this.buildBootstrap(token);
   }
 }

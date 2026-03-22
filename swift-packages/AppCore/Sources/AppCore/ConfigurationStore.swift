@@ -42,7 +42,7 @@ public final class ConfigurationStore: @unchecked Sendable {
             controlPlaneBaseURL: defaults.string(forKey: "controlPlaneBaseURL") ?? "http://localhost:8787",
             hostMode: HostMode(rawValue: defaults.string(forKey: "hostMode") ?? HostMode.hosted.rawValue) ?? .hosted,
             deviceID: defaults.string(forKey: "deviceID"),
-            deviceSecret: defaults.string(forKey: "deviceSecret"),
+            deviceSecret: nil,
             deviceName: deviceName,
             codexModel: defaults.string(forKey: "codexModel") ?? ProcessInfo.processInfo.environment["REMOTEOS_CODEX_MODEL"] ?? "gpt-5.4-mini",
             codexThreadID: nil
@@ -53,7 +53,6 @@ public final class ConfigurationStore: @unchecked Sendable {
         defaults.set(configuration.controlPlaneBaseURL, forKey: "controlPlaneBaseURL")
         defaults.set(configuration.hostMode.rawValue, forKey: "hostMode")
         defaults.set(configuration.deviceID, forKey: "deviceID")
-        defaults.set(configuration.deviceSecret, forKey: "deviceSecret")
         defaults.set(configuration.deviceName, forKey: "deviceName")
         defaults.set(configuration.codexModel, forKey: "codexModel")
         defaults.removeObject(forKey: "codexThreadID")

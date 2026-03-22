@@ -3,6 +3,7 @@ import type { RawData, WebSocket } from "ws";
 
 import {
   createRpcError,
+  hostStatusSchema,
   rpcErrorSchema,
   rpcNotificationSchema,
   rpcRequestSchema,
@@ -11,7 +12,8 @@ import {
 } from "@remoteos/contracts";
 import { z } from "zod";
 
-import type { MemoryBrokerStore } from "./store.js";
+import type { BrokerStore } from "./storeInterface.js";
+import type { WsTicketStore } from "./wsTicketStore.js";
 
 type RoutedSocket = WebSocket & { deviceId?: string };
 
@@ -31,29 +33,63 @@ function send(socket: WebSocket, payload: unknown) {
 
 export async function registerWsBroker(
   app: FastifyInstance,
-  store: MemoryBrokerStore
+  options: {
+    store: BrokerStore;
+    authMode: "none" | "required";
+    wsTickets: WsTicketStore;
+  }
 ) {
+  const {
+    authMode,
+    store,
+    wsTickets
+  } = options;
+
   app.get(
     "/ws/host",
     { websocket: true },
     (socket, request) => {
       const routedSocket = socket as RoutedSocket;
-      const query = z
-        .object({
-          deviceId: z.string().min(1),
-          deviceSecret: z.string().min(1)
-        })
-        .parse(request.query);
+      const hostIdentity =
+        authMode === "required"
+          ? (() => {
+              const query = z
+                .object({
+                  ticket: z.string().min(1)
+                })
+                .parse(request.query);
+              const ticket = wsTickets.consume(query.ticket);
+              if (!ticket || ticket.type !== "host") {
+                return undefined;
+              }
+              return {
+                deviceId: ticket.deviceId
+              };
+            })()
+          : (() => {
+              const query = z
+                .object({
+                  deviceId: z.string().min(1),
+                  deviceSecret: z.string().min(1)
+                })
+                .parse(request.query);
+              const device = store.getDevice(query.deviceId);
+              if (!device || device.deviceSecret !== query.deviceSecret) {
+                return undefined;
+              }
+              return {
+                deviceId: query.deviceId
+              };
+            })();
 
-      const device = store.getDevice(query.deviceId);
-      if (!device || device.deviceSecret !== query.deviceSecret) {
+      if (!hostIdentity) {
         routedSocket.send(JSON.stringify(createRpcError(null, 401, "Unauthorized host")));
         routedSocket.close();
         return;
       }
 
-      store.attachHost(query.deviceId, routedSocket);
-      routedSocket.deviceId = query.deviceId;
+      store.attachHost(hostIdentity.deviceId, routedSocket);
+      routedSocket.deviceId = hostIdentity.deviceId;
 
       routedSocket.on("message", (raw: RawData) => {
         const message = parseJson(raw);
@@ -72,13 +108,16 @@ export async function registerWsBroker(
                 })
                 .safeParse(notification.data.params);
               if (parsed.success) {
-                store.updateWindows(query.deviceId, parsed.data.windows);
+                store.updateWindows(hostIdentity.deviceId, parsed.data.windows);
               }
             } else if (notification.data.method === "host.status") {
-              store.updateHostStatus(query.deviceId, notification.data.params);
+              const parsedStatus = hostStatusSchema.safeParse(notification.data.params);
+              if (parsedStatus.success) {
+                store.updateHostStatus(hostIdentity.deviceId, parsedStatus.data);
+              }
             }
 
-            for (const clientSocket of store.getConnectedClientSockets(query.deviceId)) {
+            for (const clientSocket of store.getConnectedClientSockets(hostIdentity.deviceId)) {
               send(clientSocket, notification.data);
             }
             return;
@@ -94,26 +133,22 @@ export async function registerWsBroker(
           return;
         }
 
-        for (const clientSocket of store.getConnectedClientSockets(query.deviceId)) {
+        for (const clientSocket of store.getConnectedClientSockets(hostIdentity.deviceId)) {
           send(clientSocket, message);
         }
       });
 
       routedSocket.on("close", () => {
-        store.detachHostSocket(query.deviceId, routedSocket);
-        for (const clientSocket of store.getConnectedClientSockets(query.deviceId)) {
-          send(clientSocket, {
-            jsonrpc: "2.0",
-            method: "host.status",
-            params: {
-              deviceId: query.deviceId,
-              online: false,
-              selectedWindowId: null,
-              screenRecording: "unknown",
-              accessibility: "unknown",
-              directUrl: null
-            }
-          });
+        store.detachHostSocket(hostIdentity.deviceId, routedSocket);
+        const status = store.getCurrentHostStatus(hostIdentity.deviceId);
+        if (status) {
+          for (const clientSocket of store.getConnectedClientSockets(hostIdentity.deviceId)) {
+            send(clientSocket, {
+              jsonrpc: "2.0",
+              method: "host.status",
+              params: status
+            });
+          }
         }
       });
     }
@@ -124,14 +159,34 @@ export async function registerWsBroker(
     { websocket: true },
     (socket, request) => {
       const routedSocket = socket as RoutedSocket;
-      const query = z
-        .object({
-          clientToken: z.string().min(1)
-        })
-        .parse(request.query);
+      const clientIdentity =
+        authMode === "required"
+          ? (() => {
+              const query = z
+                .object({
+                  ticket: z.string().min(1)
+                })
+                .parse(request.query);
+              const ticket = wsTickets.consume(query.ticket);
+              if (!ticket || ticket.type !== "client") {
+                return undefined;
+              }
+              return {
+                clientToken: ticket.clientToken
+              };
+            })()
+          : z
+              .object({
+                clientToken: z.string().min(1)
+              })
+              .parse(request.query);
 
       try {
-        const { session, device } = store.attachClient(query.clientToken, routedSocket);
+        if (!clientIdentity) {
+          throw new Error("Unauthorized client");
+        }
+
+        const { session, device } = store.attachClient(clientIdentity.clientToken, routedSocket);
         routedSocket.deviceId = session.deviceId;
 
         routedSocket.on("message", (raw: RawData) => {
@@ -150,7 +205,7 @@ export async function registerWsBroker(
         });
 
         routedSocket.on("close", () => {
-          store.detachClientSocket(query.clientToken, routedSocket);
+          store.detachClientSocket(clientIdentity.clientToken, routedSocket);
         });
       } catch (error) {
         send(routedSocket, createRpcError(null, 401, error instanceof Error ? error.message : "Unauthorized client"));

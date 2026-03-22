@@ -21,6 +21,11 @@ public enum HostMode: String, Codable, Sendable {
     case direct
 }
 
+public enum ControlPlaneAuthMode: String, Codable, Sendable {
+    case none
+    case required
+}
+
 public enum CaptureTarget: Sendable, Equatable {
     case window(windowID: Int)
     case display(displayID: Int)
@@ -407,9 +412,18 @@ public struct TraceEventPayload: Codable, Sendable, Identifiable, Equatable {
 }
 
 public struct BrokerRegistration: Codable, Sendable, Equatable {
-    public var device: DevicePayload
+    public var device: DevicePayload?
+    public var deviceId: String?
     public var deviceSecret: String
-    public var wsUrl: String
+    public var wsUrl: String?
+    public var approvalRequired: Bool?
+    public var enrollmentUrl: String?
+    public var enrollmentToken: String?
+    public var expiresAt: String?
+
+    public var isApprovalRequired: Bool {
+        approvalRequired == true
+    }
 }
 
 public struct DevicePayload: Codable, Sendable, Equatable {
@@ -429,6 +443,39 @@ public struct PairingSessionPayload: Codable, Sendable, Equatable {
     public var expiresAt: String
     public var createdAt: String
     public var pairingUrl: String
+}
+
+public struct ControlPlaneHealthPayload: Codable, Sendable, Equatable {
+    public var ok: Bool
+    public var now: String
+    public var authMode: ControlPlaneAuthMode
+    public var googleAuthEnabled: Bool?
+}
+
+public enum DeviceEnrollmentStatus: String, Codable, Sendable, Equatable {
+    case pending
+    case approved
+    case expired
+}
+
+public struct DeviceEnrollmentPayload: Codable, Sendable, Equatable {
+    public var id: String
+    public var token: String
+    public var deviceId: String
+    public var deviceName: String
+    public var deviceMode: HostMode
+    public var status: DeviceEnrollmentStatus
+    public var enrollmentUrl: String
+    public var expiresAt: String
+    public var createdAt: String
+    public var approvedAt: String?
+    public var approvedByUserId: String?
+}
+
+public struct WebSocketTicketPayload: Codable, Sendable, Equatable {
+    public var ticket: String
+    public var expiresAt: String
+    public var wsUrl: String
 }
 
 public struct InputTapPayload: Codable, Sendable, Equatable {

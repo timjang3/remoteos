@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 
 import { App } from "./app.js";
+import { AuthGate } from "./components/AuthGate.js";
 
 if (typeof window !== "undefined" && "serviceWorker" in navigator) {
   void navigator.serviceWorker.getRegistrations().then(async (registrations) => {
@@ -15,6 +16,8 @@ if (typeof window !== "undefined" && "serviceWorker" in navigator) {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <AuthGate>
+      <App />
+    </AuthGate>
   </React.StrictMode>
 );

@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "pnpm --filter @remoteos/contracts build && tsc -p tsconfig.json",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
     "dev": "pnpm --filter @remoteos/contracts build && tsx watch src/index.ts",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm --filter @remoteos/contracts build && vitest run",
@@ -12,15 +15,21 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",
+    "@fastify/rate-limit": "^10.3.0",
     "@fastify/websocket": "^11.0.0",
     "@remoteos/contracts": "workspace:*",
+    "better-auth": "^1.5.5",
+    "dotenv": "^16.6.1",
+    "drizzle-orm": "^0.45.1",
     "fastify": "^5.2.1",
     "nanoid": "^5.1.5",
-    "zod": "^3.24.2"
+    "postgres": "^3.4.8",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/ws": "^8.18.1",
+    "drizzle-kit": "^0.31.10",
     "tsx": "^4.19.3",
     "vitest": "^3.0.7"
   }

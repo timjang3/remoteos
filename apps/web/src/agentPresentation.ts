@@ -39,9 +39,11 @@ function statusTone(status: AgentItemStatus): AgentTone {
     case "declined":
       return "warning";
   }
+
+  return "neutral";
 }
 
-function statusLabel(status: AgentItemStatus) {
+function statusLabel(status: AgentItemStatus): string | null {
   switch (status) {
     case "in_progress":
       return "Running";
@@ -52,6 +54,8 @@ function statusLabel(status: AgentItemStatus) {
     case "completed":
       return null;
   }
+
+  return null;
 }
 
 function countLabel(count: number, singular: string, plural = `${singular}s`) {
@@ -294,4 +298,12 @@ export function getAgentItemPresentation(item: AgentItem): AgentItemPresentation
         ...common
       };
   }
+
+  return {
+    headline: item.body?.trim() || item.title,
+    meta: null,
+    body: null,
+    bodyMode: "plain",
+    ...common
+  };
 }

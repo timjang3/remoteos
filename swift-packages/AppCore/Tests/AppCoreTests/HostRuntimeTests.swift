@@ -17,14 +17,26 @@ private actor RequestCounter {
 private actor MockURLProtocolState {
     static let shared = MockURLProtocolState()
 
-    private var handler: (@Sendable (URLRequest) async throws -> (HTTPURLResponse, Data))?
+    private var handlers: [String: @Sendable (URLRequest) async throws -> (HTTPURLResponse, Data)] = [:]
 
-    func setHandler(_ handler: (@Sendable (URLRequest) async throws -> (HTTPURLResponse, Data))?) {
-        self.handler = handler
+    func setHandler(
+        forHost host: String,
+        _ handler: (@Sendable (URLRequest) async throws -> (HTTPURLResponse, Data))?
+    ) {
+        if let handler {
+            handlers[host] = handler
+        } else {
+            handlers.removeValue(forKey: host)
+        }
     }
 
-    func currentHandler() -> (@Sendable (URLRequest) async throws -> (HTTPURLResponse, Data))? {
-        handler
+    func currentHandler(
+        forHost host: String?
+    ) -> (@Sendable (URLRequest) async throws -> (HTTPURLResponse, Data))? {
+        guard let host else {
+            return nil
+        }
+        return handlers[host]
     }
 }
 
@@ -40,7 +52,7 @@ private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     override func startLoading() {
         Task {
             do {
-                guard let handler = await MockURLProtocolState.shared.currentHandler() else {
+                guard let handler = await MockURLProtocolState.shared.currentHandler(forHost: request.url?.host) else {
                     client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
                     return
                 }
@@ -60,6 +72,7 @@ private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
 @MainActor
 @Test func ensureDeviceRegistrationReusesInFlightRequest() async throws {
     let suiteName = "HostRuntimeTests-\(UUID().uuidString)"
+    let host = "example-inflight.test"
     guard let defaults = UserDefaults(suiteName: suiteName) else {
         Issue.record("Failed to create isolated defaults suite")
         return
@@ -68,7 +81,7 @@ private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
         defaults.removePersistentDomain(forName: suiteName)
     }
 
-    defaults.set("http://example.test", forKey: "controlPlaneBaseURL")
+    defaults.set("http://\(host)", forKey: "controlPlaneBaseURL")
     defaults.set("Test Mac", forKey: "deviceName")
 
     let configuration = URLSessionConfiguration.ephemeral
@@ -76,37 +89,58 @@ private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     let urlSession = URLSession(configuration: configuration)
     let requestCounter = RequestCounter()
 
-    await MockURLProtocolState.shared.setHandler { request in
-        #expect(request.url?.path == "/devices/register")
-        await requestCounter.increment()
-        try await Task.sleep(for: .milliseconds(50))
-
-        let payload: [String: Any] = [
-            "device": [
-                "id": "device_1",
-                "name": "Test Mac",
-                "mode": "hosted",
-                "online": false,
-                "registeredAt": "2026-03-19T00:00:00Z",
-                "lastSeenAt": NSNull()
-            ],
-            "deviceSecret": "secret_1",
-            "wsUrl": "ws://example.test/ws/host?deviceId=device_1&deviceSecret=secret_1"
-        ]
-        let data = try JSONSerialization.data(withJSONObject: payload)
-        let response = try #require(
-            HTTPURLResponse(
-                url: request.url ?? URL(string: "http://example.test/devices/register")!,
-                statusCode: 200,
-                httpVersion: nil,
-                headerFields: ["Content-Type": "application/json"]
+    await MockURLProtocolState.shared.setHandler(forHost: host) { request in
+        switch request.url?.path {
+        case "/health":
+            let payload: [String: Any] = [
+                "ok": true,
+                "now": "2026-03-19T00:00:00Z",
+                "authMode": "none",
+            ]
+            let data = try JSONSerialization.data(withJSONObject: payload)
+            let response = try #require(
+                HTTPURLResponse(
+                    url: request.url ?? URL(string: "http://example.test/health")!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )
             )
-        )
-        return (response, data)
+            return (response, data)
+        case "/devices/register":
+            await requestCounter.increment()
+            try await Task.sleep(for: .milliseconds(50))
+
+            let payload: [String: Any] = [
+                "device": [
+                    "id": "device_1",
+                    "name": "Test Mac",
+                    "mode": "hosted",
+                    "online": false,
+                    "registeredAt": "2026-03-19T00:00:00Z",
+                    "lastSeenAt": NSNull()
+                ],
+                "deviceSecret": "secret_1",
+                "wsUrl": "ws://example.test/ws/host?deviceId=device_1&deviceSecret=secret_1"
+            ]
+            let data = try JSONSerialization.data(withJSONObject: payload)
+            let response = try #require(
+                HTTPURLResponse(
+                    url: request.url ?? URL(string: "http://example.test/devices/register")!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )
+            )
+            return (response, data)
+        default:
+            Issue.record("Unexpected request path \(request.url?.path ?? "nil")")
+            throw URLError(.unsupportedURL)
+        }
     }
     defer {
         Task {
-            await MockURLProtocolState.shared.setHandler(nil)
+            await MockURLProtocolState.shared.setHandler(forHost: host, nil)
         }
     }
 
@@ -121,11 +155,167 @@ private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     let firstRegistration = try await first
     let secondRegistration = try await second
 
-    #expect(firstRegistration.device.id == "device_1")
-    #expect(secondRegistration.device.id == "device_1")
+    #expect(firstRegistration.device?.id == "device_1")
+    #expect(secondRegistration.device?.id == "device_1")
     #expect(runtime.configuration.deviceID == "device_1")
     #expect(runtime.configuration.deviceSecret == "secret_1")
     #expect(await requestCounter.value() == 1)
+}
+
+@MainActor
+@Test func ensureDeviceRegistrationReturnsPendingEnrollmentForHostedApproval() async throws {
+    let suiteName = "HostRuntimeEnrollmentTests-\(UUID().uuidString)"
+    let host = "example-enrollment.test"
+    guard let defaults = UserDefaults(suiteName: suiteName) else {
+        Issue.record("Failed to create isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    defaults.set("http://\(host)", forKey: "controlPlaneBaseURL")
+    defaults.set("Test Mac", forKey: "deviceName")
+
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [MockURLProtocol.self]
+    let urlSession = URLSession(configuration: configuration)
+
+    await MockURLProtocolState.shared.setHandler(forHost: host) { request in
+        switch request.url?.path {
+        case "/devices/register":
+            let payload: [String: Any] = [
+                "approvalRequired": true,
+                "deviceId": "device_1",
+                "deviceSecret": "secret_1",
+                "enrollmentUrl": "http://localhost:5173/?enroll=enrollment_1",
+                "enrollmentToken": "enrollment_1",
+                "expiresAt": "2026-03-19T00:15:00Z"
+            ]
+            let data = try JSONSerialization.data(withJSONObject: payload)
+            let response = try #require(
+                HTTPURLResponse(
+                    url: request.url ?? URL(string: "http://example.test/devices/register")!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )
+            )
+            return (response, data)
+        default:
+            Issue.record("Unexpected request path \(request.url?.path ?? "nil")")
+            throw URLError(.unsupportedURL)
+        }
+    }
+    defer {
+        Task {
+            await MockURLProtocolState.shared.setHandler(forHost: host, nil)
+        }
+    }
+
+    let runtime = try HostRuntime(
+        configurationStore: ConfigurationStore(defaults: defaults),
+        brokerClient: BrokerClient(urlSession: urlSession),
+        urlSession: urlSession
+    )
+
+    let registration = try await runtime.ensureDeviceRegistration()
+
+    #expect(registration.isApprovalRequired == true)
+    #expect(registration.device == nil)
+    #expect(registration.deviceId == "device_1")
+    #expect(registration.enrollmentToken == "enrollment_1")
+    #expect(runtime.configuration.deviceID == "device_1")
+    #expect(runtime.configuration.deviceSecret == "secret_1")
+}
+
+@MainActor
+@Test func ensureDeviceRegistrationFailsWhenStoredDeviceSecretIsMissing() async throws {
+    let suiteName = "HostRuntimeMissingSecretTests-\(UUID().uuidString)"
+    let host = "example-missing-secret.test"
+    guard let defaults = UserDefaults(suiteName: suiteName) else {
+        Issue.record("Failed to create isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    defaults.set("http://\(host)", forKey: "controlPlaneBaseURL")
+    defaults.set("device_1", forKey: "deviceID")
+    defaults.set("Test Mac", forKey: "deviceName")
+
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [MockURLProtocol.self]
+    let urlSession = URLSession(configuration: configuration)
+    let requestCounter = RequestCounter()
+
+    await MockURLProtocolState.shared.setHandler(forHost: host) { request in
+        await requestCounter.increment()
+        Issue.record("Unexpected request path \(request.url?.path ?? "nil")")
+        throw URLError(.unsupportedURL)
+    }
+    defer {
+        Task {
+            await MockURLProtocolState.shared.setHandler(forHost: host, nil)
+        }
+    }
+
+    let runtime = try HostRuntime(
+        configurationStore: ConfigurationStore(defaults: defaults),
+        keychainTokenStore: KeychainTokenStore(service: "HostRuntimeMissingSecret-\(UUID().uuidString)"),
+        brokerClient: BrokerClient(urlSession: urlSession),
+        urlSession: urlSession
+    )
+
+    do {
+        _ = try await runtime.ensureDeviceRegistration()
+        Issue.record("Expected registration to fail when the stored device secret is missing")
+    } catch {
+        #expect(error.localizedDescription.contains("Stored device registration is incomplete"))
+    }
+
+    #expect(await requestCounter.value() == 0)
+}
+
+@MainActor
+@Test func logOutHostedDeviceClearsStoredRegistration() throws {
+    let suiteName = "HostRuntimeLogoutTests-\(UUID().uuidString)"
+    let keychainService = "HostRuntimeLogout-\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: suiteName) else {
+        Issue.record("Failed to create isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    defaults.set("http://localhost:8787", forKey: "controlPlaneBaseURL")
+    defaults.set(HostMode.hosted.rawValue, forKey: "hostMode")
+    defaults.set("device_1", forKey: "deviceID")
+    defaults.set("Test Mac", forKey: "deviceName")
+
+    let keychain = KeychainTokenStore(service: keychainService)
+    keychain.save("secret_1", for: .deviceSecret)
+    defer {
+        keychain.save(nil, for: .deviceSecret)
+    }
+
+    let runtime = try HostRuntime(
+        configurationStore: ConfigurationStore(defaults: defaults),
+        keychainTokenStore: keychain
+    )
+
+    #expect(runtime.configuration.deviceID == "device_1")
+    #expect(runtime.configuration.deviceSecret == "secret_1")
+
+    runtime.logOutHostedDevice()
+
+    #expect(runtime.configuration.deviceID == nil)
+    #expect(runtime.configuration.deviceSecret == nil)
+    #expect(runtime.hostStatus.deviceId == "unregistered")
+    #expect(defaults.string(forKey: "deviceID") == nil)
+    #expect(keychain.load(.deviceSecret) == nil)
 }
 
 @Test func brokerReconnectReusesUnexpiredPairingForSameDevice() {

@@ -138,7 +138,49 @@ struct ContentView: View {
 
     private var pairingSection: some View {
         VStack(spacing: 12) {
-            if let pairing = runtime.pairingSession {
+            if let enrollment = runtime.pendingEnrollment {
+                VStack(spacing: 12) {
+                    if enrollment.status == .expired {
+                        Image(systemName: "exclamationmark.circle")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.orange)
+
+                        Text("Request Expired")
+                            .font(.headline)
+
+                        Text("Start enrollment again from this Mac to generate a new sign-in link.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    } else {
+                        Image(systemName: "person.crop.circle.badge.checkmark")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.blue)
+
+                        Text("Sign in to authorize this Mac")
+                            .font(.headline)
+
+                        Text("Open your browser, sign in with Google, and approve this Mac.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+
+                        Button {
+                            runtime.openPendingEnrollmentInBrowser()
+                        } label: {
+                            Label("Open sign-in page", systemImage: "safari")
+                        }
+                        .controlSize(.small)
+                        .buttonStyle(.borderedProminent)
+                        .tint(.blue)
+
+                        Text("Expires \(formatTimestamp(enrollment.expiresAt))")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .frame(height: 160)
+            } else if let pairing = runtime.pairingSession {
                 QRCodeView(text: pairing.pairingUrl)
                     .frame(width: 160, height: 160)
 
@@ -191,11 +233,18 @@ struct ContentView: View {
                 VStack(spacing: 8) {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Creating pairing session...")
+                    Text("Connecting this Mac...")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 .frame(height: 160)
+            }
+
+            if let lastConnectionError = runtime.lastConnectionError {
+                Text(lastConnectionError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
             }
         }
         .frame(maxWidth: .infinity)
@@ -491,6 +540,15 @@ struct ContentView: View {
         return code
     }
 
+    private func formatTimestamp(_ value: String) -> String {
+        let formatter = ISO8601DateFormatter()
+        guard let date = formatter.date(from: value) else {
+            return value
+        }
+
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
     private func copyToClipboard(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
@@ -564,6 +622,19 @@ struct SettingsView: View {
     @State private var launchAtLogin = false
     @State private var saveMessage: String?
 
+    private var controlPlaneAuthStatus: String {
+        guard let mode = runtime.controlPlaneAuthMode else {
+            return "Checking"
+        }
+        return mode == .required ? "Required" : "Disabled"
+    }
+
+    private var canLogOutHostedDevice: Bool {
+        hostMode == .hosted
+            && runtime.controlPlaneAuthMode == .required
+            && (runtime.configuration.deviceID != nil || runtime.pendingEnrollment != nil)
+    }
+
     var body: some View {
         Form {
             Section("Connection") {
@@ -574,6 +645,37 @@ struct SettingsView: View {
                     Text("Direct").tag(HostMode.direct)
                 }
                 .pickerStyle(.segmented)
+            }
+
+            if hostMode == .hosted {
+                Section("Authentication") {
+                    HStack {
+                        Text("Status")
+                        Spacer()
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(
+                                    runtime.controlPlaneAuthMode == .required
+                                        ? Color.green : Color.secondary
+                                )
+                                .frame(width: 6, height: 6)
+                            Text(controlPlaneAuthStatus)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Text(
+                        "Hosted mode requires a one-time browser sign-in to authorize this Mac."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                    if canLogOutHostedDevice {
+                        Button("Log out this Mac", role: .destructive) {
+                            runtime.logOutHostedDevice()
+                        }
+                    }
+                }
             }
 
             Section("Codex") {

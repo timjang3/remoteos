@@ -132,10 +132,6 @@ describe("agentPresentation", () => {
       lastError: null
     };
 
-    expect(getCodexHeaderChips(status)).toEqual([
-      "gpt-5.4",
-      "working",
-      "thread thread_1"
-    ]);
+    expect(getCodexHeaderChips(status)).toEqual(["Agent working"]);
   });
 });

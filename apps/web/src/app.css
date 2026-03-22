@@ -485,6 +485,35 @@ input, textarea {
   font-size: 14px;
 }
 
+.window-preview-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  transition: background 0.15s;
+  z-index: 1;
+}
+
+.window-preview-close:active {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.window-preview-close svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* ── Chat Messages ───────────────────────────────────────── */
 
 .chat-messages {

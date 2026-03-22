@@ -112,7 +112,7 @@ function frameToObjectUrl(frame: WindowFrame): string {
  * the display refresh rate so we never queue more React re-renders than
  * the screen can paint.  Revokes stale URLs to prevent memory leaks.
  */
-function useThrottledFrameUrl(frame: WindowFrame | undefined): string | null {
+function useThrottledFrameUrl(frame: WindowFrame | undefined, paused?: boolean): string | null {
   const [url, setUrl] = useState<string | null>(null);
   const prevUrlRef = useRef<string | null>(null);
   const pendingFrameRef = useRef<WindowFrame | undefined>(undefined);
@@ -131,6 +131,10 @@ function useThrottledFrameUrl(frame: WindowFrame | undefined): string | null {
     // Stash the latest frame; the RAF callback always processes the newest one.
     pendingFrameRef.current = frame;
 
+    // When paused (tab hidden), skip rendering — the latest frame will be
+    // picked up automatically when the tab becomes visible again.
+    if (paused) return;
+
     if (rafIdRef.current) return; // already scheduled
 
     rafIdRef.current = requestAnimationFrame(() => {
@@ -146,7 +150,7 @@ function useThrottledFrameUrl(frame: WindowFrame | undefined): string | null {
       prevUrlRef.current = nextUrl;
       setUrl(nextUrl);
     });
-  }, [frame]);
+  }, [frame, paused]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -669,6 +673,7 @@ export function App() {
   const [showWindows, setShowWindows] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
+  const [tabVisible, setTabVisible] = useState(true);
   const [isAgentStartPending, startAgentStartTransition] = useTransition();
 
   const authClient = useMemo(
@@ -684,7 +689,15 @@ export function App() {
     () => windows.find((window) => window.id === selectedWindowId) ?? null,
     [selectedWindowId, windows]
   );
-  const frameUrl = useThrottledFrameUrl(frame);
+  const frameUrl = useThrottledFrameUrl(frame, !tabVisible);
+
+  useEffect(() => {
+    function handleVisibility() {
+      setTabVisible(document.visibilityState === "visible");
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
 
   // Pre-compute blob URLs for snapshot thumbnails to avoid inline base64 data URLs
   const snapshotUrlsRef = useRef<Record<number, string>>({});
@@ -933,6 +946,23 @@ export function App() {
     });
   }, [agentTurn, pendingAgentSend, transcript]);
 
+  // Stop streaming when the tab/browser closes so the host doesn't keep capturing
+  useEffect(() => {
+    function handlePageHide() {
+      const socket = clientRef.current?.getRawSocket();
+      if (socket && socket.readyState === WebSocket.OPEN && selectedWindowId) {
+        socket.send(JSON.stringify({
+          jsonrpc: "2.0",
+          id: `cleanup-${Date.now()}`,
+          method: "stream.stop",
+          params: { windowId: selectedWindowId }
+        }));
+      }
+    }
+    window.addEventListener("pagehide", handlePageHide);
+    return () => window.removeEventListener("pagehide", handlePageHide);
+  }, [selectedWindowId]);
+
   async function handlePairing() {
     setConnectionState("pairing");
     setError(null);
@@ -962,6 +992,23 @@ export function App() {
     await clientRef.current.selectWindow(windowId);
     await clientRef.current.startStream(windowId);
     await refreshSemanticSnapshot(windowId);
+  }
+
+  async function handleDeselectWindow() {
+    if (!clientRef.current || !selectedWindowId) return;
+    const windowId = selectedWindowId;
+    if (agentTurn?.status === "running") {
+      void clientRef.current.cancelAgent(agentTurn.id);
+    }
+    setSelectedWindowId(null);
+    setFrame(undefined);
+    setSemanticSnapshot(null);
+    setSemanticDiff(null);
+    try {
+      await clientRef.current.stopStream(windowId);
+    } catch {
+      // Stream may already be stopped
+    }
   }
 
   async function handleAgent() {
@@ -1181,10 +1228,24 @@ export function App() {
         {selectedWindow && frameUrl ? (
           <div className="window-preview">
             <img src={frameUrl} alt={selectedWindow.title} draggable={false} />
+            <button
+              className="window-preview-close"
+              onClick={() => void handleDeselectWindow()}
+              aria-label="Stop streaming"
+            >
+              <XIcon />
+            </button>
           </div>
         ) : selectedWindow ? (
           <div className="window-preview window-preview-loading">
             <p>Loading...</p>
+            <button
+              className="window-preview-close"
+              onClick={() => void handleDeselectWindow()}
+              aria-label="Stop streaming"
+            >
+              <XIcon />
+            </button>
           </div>
         ) : null}
 

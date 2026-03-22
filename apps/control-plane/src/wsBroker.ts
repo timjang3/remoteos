@@ -206,6 +206,17 @@ export async function registerWsBroker(
 
         routedSocket.on("close", () => {
           store.detachClientSocket(clientIdentity.clientToken, routedSocket);
+
+          // If no clients remain, tell the host to stop streaming
+          const remaining = store.getConnectedClientSockets(session.deviceId);
+          if (remaining.length === 0 && device.hostSocket) {
+            send(device.hostSocket, {
+              jsonrpc: "2.0",
+              id: `broker-cleanup-${Date.now()}`,
+              method: "stream.stop",
+              params: { windowId: 0 }
+            });
+          }
         });
       } catch (error) {
         send(routedSocket, createRpcError(null, 401, error instanceof Error ? error.message : "Unauthorized client"));

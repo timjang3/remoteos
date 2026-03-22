@@ -474,6 +474,10 @@ export class BrokerClient {
     return this.socket;
   }
 
+  getRawSocket(): WebSocket | undefined {
+    return this.socket;
+  }
+
   disconnect() {
     this.rejectPending(new Error("Socket closed"));
     this.socket?.close();

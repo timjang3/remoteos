@@ -11,3 +11,18 @@ swift-packages/AppCore/.build
 *.xcuserdata
 *.xcuserstate
 DerivedData
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+*.swp
+*.swo
+*~
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*

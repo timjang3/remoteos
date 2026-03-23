@@ -1,5 +1,14 @@
 import Foundation
 
+private enum ConfigurationDefaultsKey {
+    static let controlPlaneBaseURL = "controlPlaneBaseURL"
+    static let hostMode = "hostMode"
+    static let deviceID = "deviceID"
+    static let deviceName = "deviceName"
+    static let codexModel = "codexModel"
+    static let codexThreadID = "codexThreadID"
+}
+
 public struct HostConfiguration: Sendable {
     public var controlPlaneBaseURL: String
     public var hostMode: HostMode
@@ -36,25 +45,30 @@ public final class ConfigurationStore: @unchecked Sendable {
     }
 
     public func load() -> HostConfiguration {
-        let deviceName = defaults.string(forKey: "deviceName") ?? Host.current().localizedName ?? "RemoteOS Mac"
-        defaults.removeObject(forKey: "codexThreadID")
+        let deviceName = defaults.string(forKey: ConfigurationDefaultsKey.deviceName) ?? Host.current().localizedName ?? "RemoteOS Mac"
+        defaults.removeObject(forKey: ConfigurationDefaultsKey.codexThreadID)
         return HostConfiguration(
-            controlPlaneBaseURL: defaults.string(forKey: "controlPlaneBaseURL") ?? "http://localhost:8787",
-            hostMode: HostMode(rawValue: defaults.string(forKey: "hostMode") ?? HostMode.hosted.rawValue) ?? .hosted,
-            deviceID: defaults.string(forKey: "deviceID"),
+            controlPlaneBaseURL: defaults.string(forKey: ConfigurationDefaultsKey.controlPlaneBaseURL) ?? "http://localhost:8787",
+            hostMode: HostMode(rawValue: defaults.string(forKey: ConfigurationDefaultsKey.hostMode) ?? HostMode.hosted.rawValue) ?? .hosted,
+            deviceID: defaults.string(forKey: ConfigurationDefaultsKey.deviceID),
             deviceSecret: nil,
             deviceName: deviceName,
-            codexModel: defaults.string(forKey: "codexModel") ?? ProcessInfo.processInfo.environment["REMOTEOS_CODEX_MODEL"] ?? "gpt-5.4-mini",
+            codexModel: defaults.string(forKey: ConfigurationDefaultsKey.codexModel) ?? ProcessInfo.processInfo.environment["REMOTEOS_CODEX_MODEL"] ?? "gpt-5.4-mini",
             codexThreadID: nil
         )
     }
 
     public func save(_ configuration: HostConfiguration) {
-        defaults.set(configuration.controlPlaneBaseURL, forKey: "controlPlaneBaseURL")
-        defaults.set(configuration.hostMode.rawValue, forKey: "hostMode")
-        defaults.set(configuration.deviceID, forKey: "deviceID")
-        defaults.set(configuration.deviceName, forKey: "deviceName")
-        defaults.set(configuration.codexModel, forKey: "codexModel")
-        defaults.removeObject(forKey: "codexThreadID")
+        defaults.set(configuration.controlPlaneBaseURL, forKey: ConfigurationDefaultsKey.controlPlaneBaseURL)
+        defaults.set(configuration.hostMode.rawValue, forKey: ConfigurationDefaultsKey.hostMode)
+        defaults.set(configuration.deviceID, forKey: ConfigurationDefaultsKey.deviceID)
+        defaults.set(configuration.deviceName, forKey: ConfigurationDefaultsKey.deviceName)
+        defaults.set(configuration.codexModel, forKey: ConfigurationDefaultsKey.codexModel)
+        defaults.removeObject(forKey: ConfigurationDefaultsKey.codexThreadID)
+    }
+
+    public func resetConnectionOverrides() {
+        defaults.removeObject(forKey: ConfigurationDefaultsKey.controlPlaneBaseURL)
+        defaults.removeObject(forKey: ConfigurationDefaultsKey.hostMode)
     }
 }

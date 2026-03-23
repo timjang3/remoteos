@@ -296,21 +296,67 @@ public final class HostRuntime: ObservableObject {
 
     public func updateConfiguration(baseURL: String, mode: HostMode, deviceName: String, codexModel: String) {
         log.info("Updating host configuration mode=\(mode.rawValue) deviceName=\(deviceName) model=\(codexModel)")
+        let didChangeConnectionTarget =
+            configuration.controlPlaneBaseURL != baseURL || configuration.hostMode != mode
         configuration.controlPlaneBaseURL = baseURL
         configuration.hostMode = mode
         configuration.deviceName = deviceName
         configuration.codexModel = codexModel.isEmpty ? "gpt-5.4-mini" : codexModel
-        persistConfiguration()
+        if didChangeConnectionTarget {
+            clearStoredDeviceRegistration(
+                logMessage: "Clearing saved device registration after connection settings changed"
+            )
+        } else {
+            persistConfiguration()
+        }
         hostStatus.directUrl = mode == .direct ? baseURL : nil
         controlPlaneAuthMode = nil
         pendingEnrollment = nil
         enrollmentPollingTask?.cancel()
         enrollmentPollingTask = nil
         lastOpenedEnrollmentToken = nil
+        if didChangeConnectionTarget, shouldMaintainBrokerConnection {
+            scheduleBrokerReconnect(after: .zero)
+        }
 
         Task {
             _ = await codexClient.prepareForTurns(forceStatusRefresh: true)
         }
+        Task {
+            try? await refreshControlPlaneAuthMode()
+        }
+    }
+
+    public func resetConnectionConfigurationToDefaults() {
+        log.notice("Resetting connection settings to app defaults")
+        configurationStore.resetConnectionOverrides()
+        let defaultConfiguration = configurationStore.load()
+        let didChangeConnectionTarget =
+            configuration.controlPlaneBaseURL != defaultConfiguration.controlPlaneBaseURL
+            || configuration.hostMode != defaultConfiguration.hostMode
+
+        configuration.controlPlaneBaseURL = defaultConfiguration.controlPlaneBaseURL
+        configuration.hostMode = defaultConfiguration.hostMode
+
+        if didChangeConnectionTarget {
+            clearStoredDeviceRegistration(
+                logMessage: "Clearing saved device registration after resetting connection settings to app defaults"
+            )
+        } else {
+            persistConfiguration()
+        }
+
+        hostStatus.directUrl =
+            configuration.hostMode == .direct ? configuration.controlPlaneBaseURL : nil
+        controlPlaneAuthMode = nil
+        pendingEnrollment = nil
+        enrollmentPollingTask?.cancel()
+        enrollmentPollingTask = nil
+        lastOpenedEnrollmentToken = nil
+        if didChangeConnectionTarget, shouldMaintainBrokerConnection {
+            scheduleBrokerReconnect(after: .zero)
+        }
+
         Task {
             try? await refreshControlPlaneAuthMode()
         }
@@ -394,23 +440,9 @@ public final class HostRuntime: ObservableObject {
             return
         }
 
-        log.notice("Clearing saved hosted device registration deviceId=\(configuration.deviceID ?? "unregistered")")
-        registrationTask?.cancel()
-        registrationTask = nil
-        brokerReconnectTask?.cancel()
-        brokerReconnectTask = nil
-        enrollmentPollingTask?.cancel()
-        enrollmentPollingTask = nil
-        pairingSession = nil
-        pendingEnrollment = nil
-        lastOpenedEnrollmentToken = nil
-        lastConnectionError = nil
-        configuration.deviceID = nil
-        configuration.deviceSecret = nil
-        persistConfiguration()
-        hostStatus.deviceId = "unregistered"
-        hostStatus.online = false
-        brokerClient.disconnect()
+        clearStoredDeviceRegistration(
+            logMessage: "Clearing saved hosted device registration"
+        )
 
         guard shouldMaintainBrokerConnection else {
             return
@@ -534,6 +566,26 @@ public final class HostRuntime: ObservableObject {
     private func persistConfiguration() {
         configurationStore.save(configuration)
         keychainTokenStore.save(configuration.deviceSecret, for: .deviceSecret)
+    }
+
+    private func clearStoredDeviceRegistration(logMessage: String) {
+        log.notice("\(logMessage) deviceId=\(configuration.deviceID ?? "unregistered")")
+        registrationTask?.cancel()
+        registrationTask = nil
+        brokerReconnectTask?.cancel()
+        brokerReconnectTask = nil
+        enrollmentPollingTask?.cancel()
+        enrollmentPollingTask = nil
+        pairingSession = nil
+        pendingEnrollment = nil
+        lastOpenedEnrollmentToken = nil
+        lastConnectionError = nil
+        configuration.deviceID = nil
+        configuration.deviceSecret = nil
+        persistConfiguration()
+        hostStatus.deviceId = "unregistered"
+        hostStatus.online = false
+        brokerClient.disconnect()
     }
 
     private func beginEnrollmentFlow(from registration: BrokerRegistration) async throws {

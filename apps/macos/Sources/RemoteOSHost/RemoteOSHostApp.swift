@@ -8,6 +8,7 @@ struct RemoteOSHostApp: App {
     private let settingsWindowController: SettingsWindowController
 
     init() {
+        DefaultConfigurationRegistrar.register()
         let runtime = RuntimeHolder.makeRuntime()
         _runtime = StateObject(wrappedValue: runtime)
         settingsWindowController = SettingsWindowController(runtime: runtime)
@@ -645,6 +646,10 @@ struct SettingsView: View {
                     Text("Direct").tag(HostMode.direct)
                 }
                 .pickerStyle(.segmented)
+
+                Text("The app loads its default connection from the bundled configuration file. Saving here overrides it for this Mac until you reset it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             if hostMode == .hosted {
@@ -712,15 +717,24 @@ struct SettingsView: View {
                     }
             }
 
-            Button("Save settings") {
-                saveMessage = nil
-                runtime.updateConfiguration(
-                    baseURL: controlPlaneURL,
-                    mode: hostMode,
-                    deviceName: deviceName,
-                    codexModel: codexModel
-                )
-                saveMessage = "Saved settings."
+            HStack {
+                Button("Save settings") {
+                    saveMessage = nil
+                    runtime.updateConfiguration(
+                        baseURL: controlPlaneURL,
+                        mode: hostMode,
+                        deviceName: deviceName,
+                        codexModel: codexModel
+                    )
+                    saveMessage = "Saved settings."
+                }
+
+                Button("Reset connection to app defaults") {
+                    saveMessage = nil
+                    runtime.resetConnectionConfigurationToDefaults()
+                    syncFieldsFromRuntime()
+                    saveMessage = "Reset connection to app defaults."
+                }
             }
 
             if let saveMessage {
@@ -731,11 +745,15 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .onAppear {
-            controlPlaneURL = runtime.configuration.controlPlaneBaseURL
-            deviceName = runtime.configuration.deviceName
-            codexModel = runtime.configuration.codexModel
-            hostMode = runtime.configuration.hostMode
+            syncFieldsFromRuntime()
         }
+    }
+
+    private func syncFieldsFromRuntime() {
+        controlPlaneURL = runtime.configuration.controlPlaneBaseURL
+        deviceName = runtime.configuration.deviceName
+        codexModel = runtime.configuration.codexModel
+        hostMode = runtime.configuration.hostMode
     }
 }
 

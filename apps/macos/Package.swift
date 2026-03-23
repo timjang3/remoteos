@@ -14,6 +14,9 @@ let package = Package(
             name: "RemoteOSHost",
             dependencies: [
                 .product(name: "AppCore", package: "AppCore")
+            ],
+            resources: [
+                .process("Resources")
             ]
         )
     ]

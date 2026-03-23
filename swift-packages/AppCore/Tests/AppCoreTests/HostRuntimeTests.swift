@@ -72,6 +72,7 @@ private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
 @MainActor
 @Test func ensureDeviceRegistrationReusesInFlightRequest() async throws {
     let suiteName = "HostRuntimeTests-\(UUID().uuidString)"
+    let keychainService = "HostRuntimeInFlight-\(UUID().uuidString)"
     let host = "example-inflight.test"
     guard let defaults = UserDefaults(suiteName: suiteName) else {
         Issue.record("Failed to create isolated defaults suite")
@@ -144,8 +145,12 @@ private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
         }
     }
 
+    let keychain = KeychainTokenStore(service: keychainService)
+    keychain.save(nil, for: .deviceSecret)
+
     let runtime = try HostRuntime(
         configurationStore: ConfigurationStore(defaults: defaults),
+        keychainTokenStore: keychain,
         brokerClient: BrokerClient(urlSession: urlSession),
         urlSession: urlSession
     )
@@ -165,6 +170,7 @@ private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
 @MainActor
 @Test func ensureDeviceRegistrationReturnsPendingEnrollmentForHostedApproval() async throws {
     let suiteName = "HostRuntimeEnrollmentTests-\(UUID().uuidString)"
+    let keychainService = "HostRuntimeEnrollment-\(UUID().uuidString)"
     let host = "example-enrollment.test"
     guard let defaults = UserDefaults(suiteName: suiteName) else {
         Issue.record("Failed to create isolated defaults suite")
@@ -213,8 +219,12 @@ private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
         }
     }
 
+    let keychain = KeychainTokenStore(service: keychainService)
+    keychain.save(nil, for: .deviceSecret)
+
     let runtime = try HostRuntime(
         configurationStore: ConfigurationStore(defaults: defaults),
+        keychainTokenStore: keychain,
         brokerClient: BrokerClient(urlSession: urlSession),
         urlSession: urlSession
     )
@@ -311,6 +321,86 @@ private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
 
     runtime.logOutHostedDevice()
 
+    #expect(runtime.configuration.deviceID == nil)
+    #expect(runtime.configuration.deviceSecret == nil)
+    #expect(runtime.hostStatus.deviceId == "unregistered")
+    #expect(defaults.string(forKey: "deviceID") == nil)
+    #expect(keychain.load(.deviceSecret) == nil)
+}
+
+@MainActor
+@Test func updateConfigurationClearsStoredRegistrationWhenConnectionTargetChanges() async throws {
+    let suiteName = "HostRuntimeUpdateConfigurationTests-\(UUID().uuidString)"
+    let keychainService = "HostRuntimeUpdateConfiguration-\(UUID().uuidString)"
+    let oldHost = "local-control-plane.test"
+    let newHost = "hosted-control-plane.test"
+    guard let defaults = UserDefaults(suiteName: suiteName) else {
+        Issue.record("Failed to create isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    defaults.set("http://\(oldHost)", forKey: "controlPlaneBaseURL")
+    defaults.set(HostMode.hosted.rawValue, forKey: "hostMode")
+    defaults.set("device_1", forKey: "deviceID")
+    defaults.set("Test Mac", forKey: "deviceName")
+
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [MockURLProtocol.self]
+    let urlSession = URLSession(configuration: configuration)
+
+    await MockURLProtocolState.shared.setHandler(forHost: newHost) { request in
+        switch request.url?.path {
+        case "/health":
+            let payload: [String: Any] = [
+                "ok": true,
+                "now": "2026-03-22T00:00:00Z",
+                "authMode": "required"
+            ]
+            let data = try JSONSerialization.data(withJSONObject: payload)
+            let response = try #require(
+                HTTPURLResponse(
+                    url: request.url ?? URL(string: "https://\(newHost)/health")!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )
+            )
+            return (response, data)
+        default:
+            Issue.record("Unexpected request path \(request.url?.path ?? "nil")")
+            throw URLError(.unsupportedURL)
+        }
+    }
+    defer {
+        Task {
+            await MockURLProtocolState.shared.setHandler(forHost: newHost, nil)
+        }
+    }
+
+    let keychain = KeychainTokenStore(service: keychainService)
+    keychain.save("secret_1", for: .deviceSecret)
+    defer {
+        keychain.save(nil, for: .deviceSecret)
+    }
+
+    let runtime = try HostRuntime(
+        configurationStore: ConfigurationStore(defaults: defaults),
+        keychainTokenStore: keychain,
+        brokerClient: BrokerClient(urlSession: urlSession),
+        urlSession: urlSession
+    )
+
+    runtime.updateConfiguration(
+        baseURL: "https://\(newHost)",
+        mode: .hosted,
+        deviceName: "Test Mac",
+        codexModel: "gpt-5.4-mini"
+    )
+
+    #expect(runtime.configuration.controlPlaneBaseURL == "https://\(newHost)")
     #expect(runtime.configuration.deviceID == nil)
     #expect(runtime.configuration.deviceSecret == nil)
     #expect(runtime.hostStatus.deviceId == "unregistered")

@@ -675,6 +675,7 @@ export function App() {
   const [showAccount, setShowAccount] = useState(false);
   const [tabVisible, setTabVisible] = useState(true);
   const [isAgentStartPending, startAgentStartTransition] = useTransition();
+  const [activeBrokerConnectionId, setActiveBrokerConnectionId] = useState(0);
 
   const authClient = useMemo(
     () => createControlPlaneAuthClient(controlPlaneBaseUrl),
@@ -684,6 +685,7 @@ export function App() {
   const clientRef = useRef<BrokerClient | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
+  const previousBrokerConnectionIdRef = useRef(0);
 
   const selectedWindow = useMemo(
     () => windows.find((window) => window.id === selectedWindowId) ?? null,
@@ -778,6 +780,8 @@ export function App() {
     setTraceEvents([]);
     setShowWindows(false);
     setShowModelPicker(false);
+    setActiveBrokerConnectionId(0);
+    previousBrokerConnectionIdRef.current = 0;
     setConnectionState("idle");
   }, []);
 
@@ -887,6 +891,7 @@ export function App() {
           }
           setConnectionState("connected");
           clientRef.current = broker;
+          setActiveBrokerConnectionId((current) => current + 1);
           try {
             const listed = await broker.listWindows();
             setWindows(listed.windows);
@@ -901,6 +906,7 @@ export function App() {
           if (clientRef.current === broker) {
             clientRef.current = null;
           }
+          setActiveBrokerConnectionId(0);
           setConnectionState("idle");
         });
       } catch (err) {
@@ -936,9 +942,27 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!selectedWindowId || !clientRef.current) return;
+    if (!selectedWindowId || !clientRef.current || activeBrokerConnectionId === 0) return;
     void refreshSemanticSnapshot(selectedWindowId);
-  }, [refreshSemanticSnapshot, selectedWindowId]);
+  }, [activeBrokerConnectionId, refreshSemanticSnapshot, selectedWindowId]);
+
+  useEffect(() => {
+    if (activeBrokerConnectionId === 0) {
+      previousBrokerConnectionIdRef.current = 0;
+      return;
+    }
+
+    if (previousBrokerConnectionIdRef.current === activeBrokerConnectionId) {
+      return;
+    }
+    previousBrokerConnectionIdRef.current = activeBrokerConnectionId;
+
+    if (!selectedWindowId || !clientRef.current) {
+      return;
+    }
+
+    void clientRef.current.startStream(selectedWindowId).catch(() => {});
+  }, [activeBrokerConnectionId, selectedWindowId]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({
@@ -991,7 +1015,6 @@ export function App() {
     setShowWindows(false);
     await clientRef.current.selectWindow(windowId);
     await clientRef.current.startStream(windowId);
-    await refreshSemanticSnapshot(windowId);
   }
 
   async function handleDeselectWindow() {

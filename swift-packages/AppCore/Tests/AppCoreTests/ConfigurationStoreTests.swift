@@ -35,3 +35,28 @@ import Testing
 
     #expect(defaults.string(forKey: "codexThreadID") == nil)
 }
+
+@Test func configurationStoreResetsConnectionOverridesToRegisteredDefaults() throws {
+    let suiteName = "ConfigurationStoreResetTests-\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: suiteName) else {
+        Issue.record("Failed to create isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    defaults.register(defaults: [
+        "controlPlaneBaseURL": "https://control-plane-production-8dfe.up.railway.app",
+        "hostMode": HostMode.hosted.rawValue
+    ])
+    defaults.set("http://localhost:8787", forKey: "controlPlaneBaseURL")
+    defaults.set(HostMode.direct.rawValue, forKey: "hostMode")
+
+    let store = ConfigurationStore(defaults: defaults)
+    store.resetConnectionOverrides()
+    let configuration = store.load()
+
+    #expect(configuration.controlPlaneBaseURL == "https://control-plane-production-8dfe.up.railway.app")
+    #expect(configuration.hostMode == .hosted)
+}

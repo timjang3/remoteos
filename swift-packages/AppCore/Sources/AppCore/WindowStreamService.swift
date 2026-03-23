@@ -7,8 +7,8 @@ import ScreenCaptureKit
 import UniformTypeIdentifiers
 
 public final class WindowStreamService: NSObject, @unchecked Sendable {
-    public var onFrame: (@MainActor @Sendable (CapturedFrame) async -> Void)?
-    public var onError: (@MainActor @Sendable (Error) async -> Void)?
+    public var onFrame: (@Sendable (CapturedFrame) async -> Void)?
+    public var onError: (@Sendable (Error) async -> Void)?
 
     private let outputQueue = DispatchQueue(label: "remoteos.window-stream.output")
     private let imageContext = CIContext()
@@ -18,6 +18,7 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
     private var currentTopologyVersion = 0
     private var fallbackSourceRect = CGRect.zero
     private var fallbackPointPixelScale = 1.0
+    private static let maxStreamLongEdgePixels = 1280
 
     public override init() {
         super.init()
@@ -33,9 +34,16 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
 
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let info = SCShareableContent.info(for: filter)
+        let sourceWidth = max(Int(info.contentRect.width * CGFloat(info.pointPixelScale)), 1)
+        let sourceHeight = max(Int(info.contentRect.height * CGFloat(info.pointPixelScale)), 1)
+        let streamSize = Self.streamPixelSize(
+            width: sourceWidth,
+            height: sourceHeight,
+            maxLongEdge: max(Self.maxStreamLongEdgePixels, 1)
+        )
         let configuration = SCStreamConfiguration()
-        configuration.width = max(Int(info.contentRect.width * CGFloat(info.pointPixelScale)), 1)
-        configuration.height = max(Int(info.contentRect.height * CGFloat(info.pointPixelScale)), 1)
+        configuration.width = streamSize.width
+        configuration.height = streamSize.height
         configuration.pixelFormat = kCVPixelFormatType_32BGRA
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: 4)
         configuration.showsCursor = true
@@ -167,6 +175,23 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
 
         return best.map(Int.init)
     }
+
+    static func streamPixelSize(width: Int, height: Int, maxLongEdge: Int) -> (width: Int, height: Int) {
+        guard width > 0, height > 0, maxLongEdge > 0 else {
+            return (max(width, 1), max(height, 1))
+        }
+
+        let longEdge = max(width, height)
+        guard longEdge > maxLongEdge else {
+            return (width, height)
+        }
+
+        let scale = Double(maxLongEdge) / Double(longEdge)
+        return (
+            width: max(Int((Double(width) * scale).rounded()), 1),
+            height: max(Int((Double(height) * scale).rounded()), 1)
+        )
+    }
 }
 
 extension WindowStreamService: SCStreamOutput, SCStreamDelegate {
@@ -175,7 +200,7 @@ extension WindowStreamService: SCStreamOutput, SCStreamDelegate {
             return
         }
 
-        Task { @MainActor [onFrame] in
+        Task { [onFrame] in
             await onFrame?(frame)
         }
     }
@@ -188,7 +213,7 @@ extension WindowStreamService: SCStreamOutput, SCStreamDelegate {
         self.stream = nil
         currentWindowID = nil
 
-        Task { @MainActor [onError] in
+        Task { [onError] in
             await onError?(error)
         }
     }

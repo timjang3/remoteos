@@ -1,11 +1,96 @@
 import Foundation
 
+actor BrokerOutboundQueue {
+    enum Kind {
+        case control
+        case frame
+    }
+
+    private struct Entry {
+        let data: Data
+        let send: @Sendable (Data) async throws -> Void
+        let continuation: CheckedContinuation<Void, Error>
+    }
+
+    private var sending = false
+    private var controlQueue: [Entry] = []
+    private var pendingFrame: Entry?
+
+    func enqueue(
+        kind: Kind,
+        data: Data,
+        send: @escaping @Sendable (Data) async throws -> Void
+    ) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            let entry = Entry(data: data, send: send, continuation: continuation)
+            switch kind {
+            case .control:
+                controlQueue.append(entry)
+            case .frame:
+                pendingFrame?.continuation.resume()
+                pendingFrame = entry
+            }
+
+            guard !sending else {
+                return
+            }
+
+            sending = true
+            let firstEntry = takeNextEntry()
+            Task {
+                await self.flush(startingWith: firstEntry)
+            }
+        }
+    }
+
+    func clear(error: Error = CancellationError()) {
+        let pendingControl = controlQueue
+        let pendingFrame = pendingFrame
+        controlQueue.removeAll()
+        self.pendingFrame = nil
+
+        for entry in pendingControl {
+            entry.continuation.resume(throwing: error)
+        }
+        pendingFrame?.continuation.resume(throwing: error)
+    }
+
+    private func takeNextEntry() -> Entry? {
+        if !controlQueue.isEmpty {
+            return controlQueue.removeFirst()
+        }
+
+        let frame = pendingFrame
+        pendingFrame = nil
+        return frame
+    }
+
+    private func flush(startingWith initialEntry: Entry?) async {
+        var currentEntry = initialEntry
+        while true {
+            guard let entry = currentEntry ?? takeNextEntry() else {
+                sending = false
+                return
+            }
+            currentEntry = nil
+
+            do {
+                try await entry.send(entry.data)
+                entry.continuation.resume()
+            } catch {
+                entry.continuation.resume(throwing: error)
+            }
+        }
+    }
+}
+
 public final class BrokerClient: NSObject, @unchecked Sendable {
     public var onRequest: (@Sendable (JsonRpcRequest) async -> Void)?
     public var onDisconnected: (@Sendable () async -> Void)?
 
     private let log = AppLogs.broker
     private let urlSession: URLSession
+    private let outboundQueue = BrokerOutboundQueue()
     private var webSocketTask: URLSessionWebSocketTask?
     private var receiveLoopTask: Task<Void, Never>?
     private var connectionGeneration = 0
@@ -43,6 +128,9 @@ public final class BrokerClient: NSObject, @unchecked Sendable {
         receiveLoopTask = nil
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
+        Task {
+            await outboundQueue.clear()
+        }
     }
 
     public func sendNotification<Payload: Encodable>(method: String, payload: Payload) async {
@@ -58,7 +146,10 @@ public final class BrokerClient: NSObject, @unchecked Sendable {
                 "params": payloadObject
             ]
             let data = try dataFromJSONObject(envelope)
-            try await webSocketTask?.send(.data(data))
+            try await enqueueOutbound(
+                data: data,
+                kind: Self.isLowPriorityNotification(method: method) ? .frame : .control
+            )
         } catch {
             log.error("Failed to send broker notification method=\(method) error=\(error.localizedDescription)")
             return
@@ -76,7 +167,7 @@ public final class BrokerClient: NSObject, @unchecked Sendable {
                 "result": payloadObject
             ]
             let data = try dataFromJSONObject(envelope)
-            try await webSocketTask?.send(.data(data))
+            try await enqueueOutbound(data: data, kind: .control)
         } catch {
             log.error("Failed to send broker success id=\(id) error=\(error.localizedDescription)")
             return
@@ -96,11 +187,29 @@ public final class BrokerClient: NSObject, @unchecked Sendable {
 
         do {
             let data = try dataFromJSONObject(envelope)
-            try await webSocketTask?.send(.data(data))
+            try await enqueueOutbound(data: data, kind: .control)
         } catch {
             log.error("Failed to send broker error id=\(id ?? "nil") code=\(code) error=\(error.localizedDescription)")
             return
         }
+    }
+
+    private func enqueueOutbound(data: Data, kind: BrokerOutboundQueue.Kind) async throws {
+        let generation = connectionGeneration
+        try await outboundQueue.enqueue(kind: kind, data: data) { [weak self] payload in
+            guard let self else {
+                throw CancellationError()
+            }
+            try await self.sendRaw(payload, generation: generation)
+        }
+    }
+
+    private func sendRaw(_ data: Data, generation: Int) async throws {
+        guard generation == connectionGeneration, let task = webSocketTask else {
+            throw CancellationError()
+        }
+
+        try await task.send(.data(data))
     }
 
     private func receiveLoop(generation: Int) async {
@@ -163,5 +272,9 @@ public final class BrokerClient: NSObject, @unchecked Sendable {
         default:
             return false
         }
+    }
+
+    private static func isLowPriorityNotification(method: String) -> Bool {
+        method == "window.frame"
     }
 }

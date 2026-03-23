@@ -66,6 +66,8 @@ public final class HostRuntime: ObservableObject {
     private var pendingPromptTimeoutTasks: [String: Task<Void, Never>] = [:]
     private var pendingPromptsAwaitingResolution: Set<String> = []
     private var deckSnapshotFailures: [Int: DeckSnapshotFailureState] = [:]
+    private var pendingStreamFramePayload: WindowFramePayload?
+    private var streamFramePublishTask: Task<Void, Never>?
 
     public init(
         configurationStore: ConfigurationStore = ConfigurationStore(),
@@ -233,11 +235,15 @@ public final class HostRuntime: ObservableObject {
 
         windowStreamService.onFrame = { [weak self] frame in
             guard let self else { return }
-            await self.storeAndPublishStreamFrame(frame)
+            await MainActor.run {
+                self.enqueueStreamFrame(frame)
+            }
         }
         windowStreamService.onError = { [weak self] error in
             guard let self else { return }
-            self.invalidateFrames(reason: error.localizedDescription)
+            await MainActor.run {
+                self.invalidateFrames(reason: error.localizedDescription)
+            }
             await self.recordTrace(level: "warning", kind: "frame_stream", message: error.localizedDescription)
         }
     }
@@ -973,10 +979,18 @@ public final class HostRuntime: ObservableObject {
         return frame
     }
 
-    private func storeAndPublishStreamFrame(_ frame: CapturedFrame) async {
-        latestFrameByWindowID[frame.windowId] = frame
+    private func invalidateFrames(reason: String) {
+        latestFrameByWindowID.removeAll()
+        toolCapturedFrames.removeAll()
+        pendingStreamFramePayload = nil
+        Task {
+            await recordTrace(level: "warning", kind: "frame_invalidated", message: reason)
+        }
+    }
 
-        let payload = WindowFramePayload(
+    private func enqueueStreamFrame(_ frame: CapturedFrame) {
+        latestFrameByWindowID[frame.windowId] = frame
+        pendingStreamFramePayload = WindowFramePayload(
             windowId: frame.windowId,
             frameId: frame.frameId,
             capturedAt: frame.capturedAt,
@@ -988,14 +1002,31 @@ public final class HostRuntime: ObservableObject {
             sourceRectPoints: frame.sourceRectPoints,
             pointPixelScale: frame.pointPixelScale
         )
-        await brokerClient.sendNotification(method: "window.frame", payload: payload)
-    }
 
-    private func invalidateFrames(reason: String) {
-        latestFrameByWindowID.removeAll()
-        toolCapturedFrames.removeAll()
-        Task {
-            await recordTrace(level: "warning", kind: "frame_invalidated", message: reason)
+        if streamFramePublishTask == nil {
+            let brokerClient = self.brokerClient
+            streamFramePublishTask = Task.detached(priority: .utility) { [weak self, brokerClient] in
+                while !Task.isCancelled {
+                    let nextPayload = await MainActor.run { [weak self] () -> WindowFramePayload? in
+                        guard let self else {
+                            return nil
+                        }
+
+                        let payload = self.pendingStreamFramePayload
+                        self.pendingStreamFramePayload = nil
+                        if payload == nil {
+                            self.streamFramePublishTask = nil
+                        }
+                        return payload
+                    }
+
+                    guard let nextPayload else {
+                        return
+                    }
+
+                    await brokerClient.sendNotification(method: "window.frame", payload: nextPayload)
+                }
+            }
         }
     }
 

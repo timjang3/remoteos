@@ -702,22 +702,35 @@ export function App() {
   }, []);
 
   // ── Virtual keyboard handling ──────────────────────────────
-  // Use the visualViewport API to resize the session container to the
-  // visible area. This keeps the composer above the keyboard while the
-  // rest of the layout stays stationary (no full-page reflow).
+  // Uses visualViewport API to set a --keyboard-height CSS variable on
+  // <html>. The .session container subtracts this from its height so
+  // the composer naturally stays above the keyboard while the header
+  // and content above stay pinned. No translateY is needed because the
+  // session is position:fixed at top:0.
   useEffect(() => {
     const viewport = window.visualViewport;
     if (!viewport) return;
 
     let raf: number | null = null;
+    let prevKeyboard = 0;
 
     function update() {
       raf = null;
-      const session = document.querySelector(".session") as HTMLElement | null;
-      if (!session || !viewport) return;
+      if (!viewport) return;
 
-      session.style.height = `${viewport.height}px`;
-      session.style.transform = `translateY(${viewport.offsetTop}px)`;
+      const kb = Math.max(0, window.innerHeight - viewport.height);
+      document.documentElement.style.setProperty("--keyboard-height", `${kb}px`);
+
+      // When keyboard opens/grows, keep chat scrolled to the bottom
+      if (kb > prevKeyboard && chatEndRef.current) {
+        chatEndRef.current.scrollIntoView({ behavior: "auto" });
+      }
+      prevKeyboard = kb;
+
+      // iOS may still shift the window origin; reset it
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
+        window.scrollTo(0, 0);
+      }
     }
 
     function scheduleUpdate() {
@@ -733,18 +746,19 @@ export function App() {
       viewport.removeEventListener("resize", scheduleUpdate);
       viewport.removeEventListener("scroll", scheduleUpdate);
       if (raf !== null) cancelAnimationFrame(raf);
+      document.documentElement.style.removeProperty("--keyboard-height");
     };
   }, []);
 
   // Prevent iOS from scrolling the window when focusing inputs.
-  // Our layout is position:fixed, so any window scroll is unwanted.
+  // Our layout is position:fixed, so any window-level scroll is unwanted.
   useEffect(() => {
     function resetScroll() {
       if (window.scrollY !== 0 || window.scrollX !== 0) {
         window.scrollTo(0, 0);
       }
     }
-    window.addEventListener("scroll", resetScroll);
+    window.addEventListener("scroll", resetScroll, { passive: true });
     return () => window.removeEventListener("scroll", resetScroll);
   }, []);
 
@@ -1061,7 +1075,6 @@ export function App() {
     setFrame(undefined);
     setShowWindows(false);
     await clientRef.current.selectWindow(windowId);
-    await clientRef.current.startStream(windowId);
   }
 
   async function handleDeselectWindow() {
@@ -1365,10 +1378,8 @@ export function App() {
               el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
             }}
             onFocus={() => {
-              // Scroll chat to bottom when keyboard opens so latest messages stay visible
-              setTimeout(() => {
-                chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-              }, 300);
+              // Reset any scroll iOS may have applied when focusing
+              window.scrollTo(0, 0);
             }}
             onKeyDown={handleAgentKeyDown}
             disabled={!isAgentReady}

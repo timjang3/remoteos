@@ -14,6 +14,11 @@ import { z } from "zod";
 
 import type { BrokerStore } from "./storeInterface.js";
 import type { WsTicketStore } from "./wsTicketStore.js";
+import {
+  clearSocketQueue,
+  queueSocketFrame,
+  queueSocketMessage
+} from "./socketSendQueue.js";
 
 type RoutedSocket = WebSocket & { deviceId?: string };
 
@@ -118,7 +123,11 @@ export async function registerWsBroker(
             }
 
             for (const clientSocket of store.getConnectedClientSockets(hostIdentity.deviceId)) {
-              send(clientSocket, notification.data);
+              if (notification.data.method === "window.frame") {
+                queueSocketFrame(clientSocket, notification.data);
+              } else {
+                queueSocketMessage(clientSocket, notification.data);
+              }
             }
             return;
           }
@@ -134,16 +143,17 @@ export async function registerWsBroker(
         }
 
         for (const clientSocket of store.getConnectedClientSockets(hostIdentity.deviceId)) {
-          send(clientSocket, message);
+          queueSocketMessage(clientSocket, message);
         }
       });
 
       routedSocket.on("close", () => {
         store.detachHostSocket(hostIdentity.deviceId, routedSocket);
+        clearSocketQueue(routedSocket);
         const status = store.getCurrentHostStatus(hostIdentity.deviceId);
         if (status) {
           for (const clientSocket of store.getConnectedClientSockets(hostIdentity.deviceId)) {
-            send(clientSocket, {
+            queueSocketMessage(clientSocket, {
               jsonrpc: "2.0",
               method: "host.status",
               params: status
@@ -192,12 +202,13 @@ export async function registerWsBroker(
         routedSocket.on("message", (raw: RawData) => {
           const message = parseJson(raw);
           if (!message) {
-            send(routedSocket, createRpcError(null, -32700, "Invalid JSON"));
+            queueSocketMessage(routedSocket, createRpcError(null, -32700, "Invalid JSON"));
             return;
           }
 
-          if (!device.hostSocket) {
-            send(routedSocket, createRpcError(null, 503, "Host is offline"));
+          if (!device.hostSocket || device.hostSocket.readyState !== device.hostSocket.OPEN) {
+            store.detachHostSocket(session.deviceId, device.hostSocket);
+            queueSocketMessage(routedSocket, createRpcError(null, 503, "Host is offline"));
             return;
           }
 
@@ -206,6 +217,7 @@ export async function registerWsBroker(
 
         routedSocket.on("close", () => {
           store.detachClientSocket(clientIdentity.clientToken, routedSocket);
+          clearSocketQueue(routedSocket);
 
           // If no clients remain, tell the host to stop streaming
           const remaining = store.getConnectedClientSockets(session.deviceId);
@@ -219,7 +231,7 @@ export async function registerWsBroker(
           }
         });
       } catch (error) {
-        send(routedSocket, createRpcError(null, 401, error instanceof Error ? error.message : "Unauthorized client"));
+        queueSocketMessage(routedSocket, createRpcError(null, 401, error instanceof Error ? error.message : "Unauthorized client"));
         routedSocket.close();
       }
     }

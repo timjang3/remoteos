@@ -36,6 +36,31 @@ function send(socket: WebSocket, payload: unknown) {
   }
 }
 
+function queueCurrentHostState(socket: WebSocket, status: ReturnType<BrokerStore["getCurrentHostStatus"]>) {
+  if (!status) {
+    return;
+  }
+
+  queueSocketMessage(socket, {
+    jsonrpc: "2.0",
+    method: "host.status",
+    params: status
+  });
+  queueSocketMessage(socket, {
+    jsonrpc: "2.0",
+    method: "codex.status",
+    params: status.codex
+  });
+}
+
+function requestHostStateSync(socket: WebSocket) {
+  send(socket, {
+    jsonrpc: "2.0",
+    method: "host.state.sync",
+    params: {}
+  });
+}
+
 export async function registerWsBroker(
   app: FastifyInstance,
   options: {
@@ -95,6 +120,11 @@ export async function registerWsBroker(
 
       store.attachHost(hostIdentity.deviceId, routedSocket);
       routedSocket.deviceId = hostIdentity.deviceId;
+      const currentStatus = store.getCurrentHostStatus(hostIdentity.deviceId);
+      for (const clientSocket of store.getConnectedClientSockets(hostIdentity.deviceId)) {
+        queueCurrentHostState(clientSocket, currentStatus);
+      }
+      requestHostStateSync(routedSocket);
 
       routedSocket.on("message", (raw: RawData) => {
         const message = parseJson(raw);
@@ -198,6 +228,10 @@ export async function registerWsBroker(
 
         const { session, device } = store.attachClient(clientIdentity.clientToken, routedSocket);
         routedSocket.deviceId = session.deviceId;
+        queueCurrentHostState(routedSocket, store.getCurrentHostStatus(session.deviceId));
+        if (device.hostSocket && device.hostSocket.readyState === device.hostSocket.OPEN) {
+          requestHostStateSync(device.hostSocket);
+        }
 
         routedSocket.on("message", (raw: RawData) => {
           const message = parseJson(raw);

@@ -21,9 +21,21 @@ public final class InputEventInjector: @unchecked Sendable {
     }
 
     public func drag(frame: CapturedFrame, fromX: Double, fromY: Double, toX: Double, toY: Double) {
-        let fromPoint = point(for: frame, normalizedX: fromX, normalizedY: fromY)
-        let toPoint = point(for: frame, normalizedX: toX, normalizedY: toY)
-        drag(globalPath: [fromPoint, toPoint], button: .left)
+        let fromPoint = CGPoint(
+            x: min(max(fromX, 0), 0.999_999_999_999) * Double(frame.width),
+            y: min(max(fromY, 0), 0.999_999_999_999) * Double(frame.height)
+        )
+        let toPoint = CGPoint(
+            x: min(max(toX, 0), 0.999_999_999_999) * Double(frame.width),
+            y: min(max(toY, 0), 0.999_999_999_999) * Double(frame.height)
+        )
+        guard
+            let globalFrom = try? globalPoint(frame: frame, x: fromPoint.x, y: fromPoint.y),
+            let globalTo = try? globalPoint(frame: frame, x: toPoint.x, y: toPoint.y)
+        else {
+            return
+        }
+        drag(globalPath: [globalFrom, globalTo], button: .left)
     }
 
     public func scroll(frame: CapturedFrame, deltaX: Double, deltaY: Double) {
@@ -53,11 +65,14 @@ public final class InputEventInjector: @unchecked Sendable {
         button: InputMouseButton = .left,
         clickCount: Int = 1
     ) {
-        click(
-            globalPoint: point(for: frame, normalizedX: normalizedX, normalizedY: normalizedY),
-            button: button,
-            clickCount: clickCount
-        )
+        let clampedX = min(max(normalizedX, 0), 0.999_999_999_999)
+        let clampedY = min(max(normalizedY, 0), 0.999_999_999_999)
+        let imageX = clampedX * Double(frame.width)
+        let imageY = clampedY * Double(frame.height)
+        guard let point = try? globalPoint(frame: frame, x: imageX, y: imageY) else {
+            return
+        }
+        click(globalPoint: point, button: button, clickCount: clickCount)
     }
 
     public func drag(
@@ -139,8 +154,9 @@ public final class InputEventInjector: @unchecked Sendable {
     }
 
     public func normalizedPoint(frame: CapturedFrame, x: Double, y: Double) -> (Double, Double) {
-        let normalizedX = x / Double(frame.width)
-        let normalizedY = y / Double(frame.height)
+        let contentRect = contentRectPixels(for: frame)
+        let normalizedX = (x - contentRect.x) / contentRect.width
+        let normalizedY = (y - contentRect.y) / contentRect.height
         return (normalizedX, normalizedY)
     }
 
@@ -151,6 +167,11 @@ public final class InputEventInjector: @unchecked Sendable {
             )
         }
         let normalized = normalizedPoint(frame: frame, x: x, y: y)
+        guard normalized.0 >= 0, normalized.1 >= 0, normalized.0 <= 1, normalized.1 <= 1 else {
+            throw AppCoreError.invalidPayload(
+                "Coordinates (\(Int(x.rounded())), \(Int(y.rounded()))) are outside the visible captured content."
+            )
+        }
         return point(for: frame, normalizedX: normalized.0, normalizedY: normalized.1)
     }
 
@@ -162,7 +183,30 @@ public final class InputEventInjector: @unchecked Sendable {
     }
 
     private func centerPoint(for frame: CapturedFrame) -> CGPoint {
-        point(for: frame, normalizedX: 0.5, normalizedY: 0.5)
+        let contentRect = contentRectPixels(for: frame)
+        let imagePoint = CGPoint(
+            x: contentRect.x + (contentRect.width / 2),
+            y: contentRect.y + (contentRect.height / 2)
+        )
+        return (try? globalPoint(frame: frame, x: imagePoint.x, y: imagePoint.y))
+            ?? point(for: frame, normalizedX: 0.5, normalizedY: 0.5)
+    }
+
+    private func contentRectPixels(for frame: CapturedFrame) -> WindowBounds {
+        let fullImageBounds = WindowBounds(
+            x: 0,
+            y: 0,
+            width: Double(frame.width),
+            height: Double(frame.height)
+        )
+        guard
+            let contentRect = frame.contentRectPixels,
+            contentRect.width > 0,
+            contentRect.height > 0
+        else {
+            return fullImageBounds
+        }
+        return contentRect
     }
 
     private func moveCursor(to point: CGPoint) {

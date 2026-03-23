@@ -1101,6 +1101,12 @@ public final class HostRuntime: ObservableObject {
             await brokerClient.sendSuccess(id: request.id ?? UUID().uuidString, payload: snapshot)
         case "semantic.diff.subscribe":
             await brokerClient.sendSuccess(id: request.id ?? UUID().uuidString, payload: ["ok": true])
+        case "host.state.sync":
+            await brokerClient.sendNotification(method: "windows.updated", payload: ["windows": windows])
+            await publishHostStatus()
+            if let requestID = request.id {
+                await brokerClient.sendSuccess(id: requestID, payload: ["ok": true])
+            }
         case "agent.turn.start":
             guard let prompt = request.params["prompt"] as? String, !prompt.isEmpty else {
                 await brokerClient.sendError(id: request.id, code: -32602, message: "Missing prompt")
@@ -1274,24 +1280,10 @@ public final class HostRuntime: ObservableObject {
             throw AppCoreError.staleFrame
         }
 
-        let rect = frame.sourceRectPoints
-        let current = window.bounds
-        let sizeDelta = abs(rect.width - current.width) + abs(rect.height - current.height)
-        guard sizeDelta <= 12 else {
+        guard Self.capturedWindowBoundsStillMatch(frame.windowBoundsPoints, current: window.bounds) else {
             throw AppCoreError.staleFrame
         }
-
-        // Adjust only position; preserve captured dimensions for accurate
-        // pixel-to-screen-point conversion (the image corresponds to the
-        // contentRect at capture time).
-        var adjustedFrame = frame
-        adjustedFrame.sourceRectPoints = WindowBounds(
-            x: current.x,
-            y: current.y,
-            width: rect.width,
-            height: rect.height
-        )
-        return adjustedFrame
+        return frame
     }
 
     private func refreshWindowsAfterAction(for window: WindowDescriptor) async {
@@ -1625,29 +1617,17 @@ public final class HostRuntime: ObservableObject {
         // The frame was captured by our own computer-use flow moments ago, so
         // we trust it without checking latestFrameByWindowID (which the
         // continuous frame stream may have overwritten with a newer frameId
-        // in the interim).  We only adjust the origin to the window's current
-        // position to account for any movement since capture, while preserving
-        // the captured width/height for accurate pixel-to-screen-point
-        // conversion.
-        let current = focusedWindow.bounds
-        let sizeDelta = abs(frame.sourceRectPoints.width - current.width)
-                      + abs(frame.sourceRectPoints.height - current.height)
-        guard sizeDelta <= 12 else {
+        // in the interim). If the window moved or resized, the frame is stale
+        // and must be recaptured before executing more actions.
+        guard Self.capturedWindowBoundsStillMatch(frame.windowBoundsPoints, current: focusedWindow.bounds) else {
             throw AppCoreError.staleFrame
         }
-        var adjustedFrame = frame
-        adjustedFrame.sourceRectPoints = WindowBounds(
-            x: current.x,
-            y: current.y,
-            width: frame.sourceRectPoints.width,
-            height: frame.sourceRectPoints.height
-        )
 
         let normalizedActions = try normalizeComputerUseActions(actions)
 
         for action in normalizedActions {
             try Task.checkCancellation()
-            try await executeComputerUseAction(action, frame: adjustedFrame)
+            try await executeComputerUseAction(action, frame: frame)
             if action.type != "wait", action.type != "screenshot" {
                 try await Task.sleep(for: .milliseconds(120))
             }
@@ -2143,6 +2123,16 @@ public final class HostRuntime: ObservableObject {
         default:
             return false
         }
+    }
+
+    nonisolated static func capturedWindowBoundsStillMatch(
+        _ captured: WindowBounds,
+        current: WindowBounds,
+        tolerance: Double = 12
+    ) -> Bool {
+        let positionDelta = abs(captured.x - current.x) + abs(captured.y - current.y)
+        let sizeDelta = abs(captured.width - current.width) + abs(captured.height - current.height)
+        return positionDelta <= tolerance && sizeDelta <= tolerance
     }
 
     nonisolated private static func requiredCoordinate(_ value: Double?, name: String) throws -> Double {

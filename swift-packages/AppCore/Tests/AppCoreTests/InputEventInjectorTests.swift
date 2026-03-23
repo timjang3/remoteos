@@ -6,7 +6,8 @@ import Testing
 private func makeCapturedFrame(
     width: Int = 800,
     height: Int = 600,
-    sourceRectPoints: WindowBounds = WindowBounds(x: -1728, y: 25, width: 1440, height: 900)
+    sourceRectPoints: WindowBounds = WindowBounds(x: -1728, y: 25, width: 1440, height: 900),
+    contentRectPixels: WindowBounds? = nil
 ) -> CapturedFrame {
     CapturedFrame(
         windowId: 42,
@@ -18,6 +19,7 @@ private func makeCapturedFrame(
         height: height,
         displayID: 1,
         sourceRectPoints: sourceRectPoints,
+        contentRectPixels: contentRectPixels,
         pointPixelScale: 2,
         topologyVersion: 1
     )
@@ -41,6 +43,39 @@ private func makeCapturedFrame(
         Issue.record("Expected out-of-bounds coordinates to fail.")
     } catch AppCoreError.invalidPayload(let message) {
         #expect(message.contains("outside the captured window bounds"))
+    } catch {
+        Issue.record("Unexpected error: \(error.localizedDescription)")
+    }
+}
+
+@Test func globalPointMapsImagePixelsThroughCapturedContentRect() throws {
+    let injector = InputEventInjector()
+    let frame = makeCapturedFrame(
+        width: 1000,
+        height: 800,
+        sourceRectPoints: WindowBounds(x: 100, y: 200, width: 800, height: 600),
+        contentRectPixels: WindowBounds(x: 100, y: 50, width: 800, height: 600)
+    )
+
+    let point = try injector.globalPoint(frame: frame, x: 500, y: 350)
+
+    #expect(point == CGPoint(x: 500, y: 500))
+}
+
+@Test func globalPointRejectsPixelsOutsideVisibleCapturedContent() {
+    let injector = InputEventInjector()
+    let frame = makeCapturedFrame(
+        width: 1000,
+        height: 800,
+        sourceRectPoints: WindowBounds(x: 100, y: 200, width: 800, height: 600),
+        contentRectPixels: WindowBounds(x: 100, y: 50, width: 800, height: 600)
+    )
+
+    do {
+        _ = try injector.globalPoint(frame: frame, x: 80, y: 350)
+        Issue.record("Expected pixels outside the visible content to fail.")
+    } catch AppCoreError.invalidPayload(let message) {
+        #expect(message.contains("outside the visible captured content"))
     } catch {
         Issue.record("Unexpected error: \(error.localizedDescription)")
     }

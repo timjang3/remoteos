@@ -470,3 +470,27 @@ private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
         ) == true
     )
 }
+
+@Test func capturedWindowBoundsStillMatchAllowsMinorMovement() {
+    #expect(
+        HostRuntime.capturedWindowBoundsStillMatch(
+            WindowBounds(x: 100, y: 200, width: 800, height: 600),
+            current: WindowBounds(x: 104, y: 206, width: 798, height: 602)
+        )
+    )
+}
+
+@Test func capturedWindowBoundsStillMatchRejectsMovedOrResizedWindows() {
+    #expect(
+        HostRuntime.capturedWindowBoundsStillMatch(
+            WindowBounds(x: 100, y: 200, width: 800, height: 600),
+            current: WindowBounds(x: 132, y: 200, width: 800, height: 600)
+        ) == false
+    )
+    #expect(
+        HostRuntime.capturedWindowBoundsStillMatch(
+            WindowBounds(x: 100, y: 200, width: 800, height: 600),
+            current: WindowBounds(x: 100, y: 200, width: 840, height: 600)
+        ) == false
+    )
+}

@@ -93,15 +93,17 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
             return nil
         }
 
-        let scale = attachments[.scaleFactor]
-            .flatMap { ($0 as? NSNumber)?.doubleValue }
-            ?? fallbackPointPixelScale
-
-        let screenRect = rectAttachment(
-            attachments[.screenRect]
-        ) ?? rectAttachment(
-            attachments[.contentRect]
-        ) ?? fallbackSourceRect
+        let geometry = ScreenshotService.frameGeometry(
+            attachments: attachments,
+            fallbackSourceRect: fallbackSourceRect,
+            fallbackScale: fallbackPointPixelScale
+        )
+        let contentRectPixels = ScreenshotService.contentRectPixels(
+            contentRectInSurface: geometry.contentRectInSurface,
+            scaleFactor: geometry.scaleFactor,
+            imageWidth: cgImage.width,
+            imageHeight: cgImage.height
+        )
 
         return CapturedFrame(
             windowId: windowID,
@@ -111,9 +113,10 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
             dataBase64: data.base64EncodedString(),
             width: cgImage.width,
             height: cgImage.height,
-            displayID: bestDisplayID(for: screenRect),
-            sourceRectPoints: screenRect.asWindowBounds,
-            pointPixelScale: scale,
+            displayID: bestDisplayID(for: geometry.screenRect),
+            sourceRectPoints: geometry.screenRect.asWindowBounds,
+            contentRectPixels: contentRectPixels?.asWindowBounds,
+            pointPixelScale: geometry.scaleFactor,
             topologyVersion: currentTopologyVersion
         )
     }
@@ -135,16 +138,6 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
             return nil
         }
         return SCFrameStatus(rawValue: rawValue)
-    }
-
-    private func rectAttachment(_ value: Any?) -> CGRect? {
-        if let value = value as? NSValue {
-            return value.rectValue
-        }
-        if let dictionary = value as? NSDictionary {
-            return CGRect(dictionaryRepresentation: dictionary)
-        }
-        return nil
     }
 
     private func bestDisplayID(for frame: CGRect) -> Int? {

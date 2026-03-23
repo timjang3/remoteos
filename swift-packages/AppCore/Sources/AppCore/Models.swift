@@ -576,7 +576,9 @@ public struct CapturedFrame: Sendable, Equatable {
     public var height: Int
     public var displayID: Int?
     public var sourceRectPoints: WindowBounds
+    public var contentRectPixels: WindowBounds?
     public var pointPixelScale: Double
+    public var windowBoundsPoints: WindowBounds
     public var topologyVersion: Int
 
     public init(
@@ -589,7 +591,9 @@ public struct CapturedFrame: Sendable, Equatable {
         height: Int,
         displayID: Int?,
         sourceRectPoints: WindowBounds,
+        contentRectPixels: WindowBounds? = nil,
         pointPixelScale: Double,
+        windowBoundsPoints: WindowBounds? = nil,
         topologyVersion: Int
     ) {
         self.windowId = windowId
@@ -601,7 +605,9 @@ public struct CapturedFrame: Sendable, Equatable {
         self.height = height
         self.displayID = displayID
         self.sourceRectPoints = sourceRectPoints
+        self.contentRectPixels = contentRectPixels
         self.pointPixelScale = pointPixelScale
+        self.windowBoundsPoints = windowBoundsPoints ?? sourceRectPoints
         self.topologyVersion = topologyVersion
     }
 }

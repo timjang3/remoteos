@@ -21,7 +21,7 @@ struct RemoteOSHostApp: App {
                 runtime: runtime,
                 openSettingsWindow: { settingsWindowController.show() }
             )
-                .frame(width: 360)
+                .frame(width: 360, height: 600)
         }
         .menuBarExtraStyle(.window)
     }

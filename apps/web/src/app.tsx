@@ -701,6 +701,53 @@ export function App() {
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, []);
 
+  // ── Virtual keyboard handling ──────────────────────────────
+  // Use the visualViewport API to resize the session container to the
+  // visible area. This keeps the composer above the keyboard while the
+  // rest of the layout stays stationary (no full-page reflow).
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+
+    let raf: number | null = null;
+
+    function update() {
+      raf = null;
+      const session = document.querySelector(".session") as HTMLElement | null;
+      if (!session || !viewport) return;
+
+      session.style.height = `${viewport.height}px`;
+      session.style.transform = `translateY(${viewport.offsetTop}px)`;
+    }
+
+    function scheduleUpdate() {
+      if (raf !== null) return;
+      raf = requestAnimationFrame(update);
+    }
+
+    viewport.addEventListener("resize", scheduleUpdate);
+    viewport.addEventListener("scroll", scheduleUpdate);
+    update();
+
+    return () => {
+      viewport.removeEventListener("resize", scheduleUpdate);
+      viewport.removeEventListener("scroll", scheduleUpdate);
+      if (raf !== null) cancelAnimationFrame(raf);
+    };
+  }, []);
+
+  // Prevent iOS from scrolling the window when focusing inputs.
+  // Our layout is position:fixed, so any window scroll is unwanted.
+  useEffect(() => {
+    function resetScroll() {
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
+        window.scrollTo(0, 0);
+      }
+    }
+    window.addEventListener("scroll", resetScroll);
+    return () => window.removeEventListener("scroll", resetScroll);
+  }, []);
+
   // Pre-compute blob URLs for snapshot thumbnails to avoid inline base64 data URLs
   const snapshotUrlsRef = useRef<Record<number, string>>({});
   const snapshotUrls = useMemo(() => {
@@ -1317,8 +1364,15 @@ export function App() {
               el.style.height = "auto";
               el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
             }}
+            onFocus={() => {
+              // Scroll chat to bottom when keyboard opens so latest messages stay visible
+              setTimeout(() => {
+                chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+              }, 300);
+            }}
             onKeyDown={handleAgentKeyDown}
             disabled={!isAgentReady}
+            enterKeyHint="send"
             placeholder={
               isAgentReady
                 ? "Ask Codex to answer or act..."

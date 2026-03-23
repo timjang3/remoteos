@@ -144,7 +144,11 @@ public final class BrokerClient: NSObject, @unchecked Sendable {
                 let id = object["id"].map { String(describing: $0) }
                 let params = stringDictionary(object["params"])
                 self.log.info("Received broker request method=\(method) id=\(id ?? "nil")")
-                await onRequest?(JsonRpcRequest(id: id, method: method, params: params))
+                let request = JsonRpcRequest(id: id, method: method, params: params)
+                let handler = onRequest
+                Task {
+                    await handler?(request)
+                }
             } catch {
                 log.error("Broker receive loop failed error=\(error.localizedDescription)")
                 return

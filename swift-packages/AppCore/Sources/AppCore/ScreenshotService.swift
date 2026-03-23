@@ -45,12 +45,10 @@ public final class ScreenshotService: @unchecked Sendable {
                 do {
                     let filter = SCContentFilter(desktopIndependentWindow: window)
                     let info = SCShareableContent.info(for: filter)
-                    let configuration = SCStreamConfiguration()
-                    configuration.pixelFormat = kCVPixelFormatType_32BGRA
-                    configuration.width = max(Int(info.contentRect.width * CGFloat(info.pointPixelScale)), 1)
-                    configuration.height = max(Int(info.contentRect.height * CGFloat(info.pointPixelScale)), 1)
-                    configuration.showsCursor = true
-                    configuration.capturesAudio = false
+                    let configuration = Self.singleWindowConfiguration(
+                        width: max(Int(info.contentRect.width * CGFloat(info.pointPixelScale)), 1),
+                        height: max(Int(info.contentRect.height * CGFloat(info.pointPixelScale)), 1)
+                    )
 
                     let captured = try await self.withTimeout(
                         duration: self.captureTimeout,
@@ -189,6 +187,19 @@ public final class ScreenshotService: @unchecked Sendable {
             width: image.width,
             height: image.height
         )
+    }
+
+    static func singleWindowConfiguration(width: Int, height: Int) -> SCStreamConfiguration {
+        let configuration = SCStreamConfiguration()
+        configuration.pixelFormat = kCVPixelFormatType_32BGRA
+        configuration.width = max(width, 1)
+        configuration.height = max(height, 1)
+        configuration.showsCursor = true
+        configuration.capturesAudio = false
+        if #available(macOS 14.2, *) {
+            configuration.includeChildWindows = true
+        }
+        return configuration
     }
 
     private func bestDisplayID(for frame: CGRect, displays: [SCDisplay]) -> Int? {

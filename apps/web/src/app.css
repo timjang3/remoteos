@@ -37,7 +37,7 @@ html, body {
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
-  touch-action: manipulation;
+  -webkit-overflow-scrolling: touch;
 }
 
 body {
@@ -187,7 +187,7 @@ input, textarea {
   top: 0;
   left: 0;
   width: 100%;
-  height: calc(100% - var(--keyboard-height, 0px));
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--bg);

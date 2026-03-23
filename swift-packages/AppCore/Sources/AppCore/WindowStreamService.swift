@@ -36,18 +36,7 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
         let info = SCShareableContent.info(for: filter)
         let sourceWidth = max(Int(info.contentRect.width * CGFloat(info.pointPixelScale)), 1)
         let sourceHeight = max(Int(info.contentRect.height * CGFloat(info.pointPixelScale)), 1)
-        let streamSize = Self.streamPixelSize(
-            width: sourceWidth,
-            height: sourceHeight,
-            maxLongEdge: max(Self.maxStreamLongEdgePixels, 1)
-        )
-        let configuration = SCStreamConfiguration()
-        configuration.width = streamSize.width
-        configuration.height = streamSize.height
-        configuration.pixelFormat = kCVPixelFormatType_32BGRA
-        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 4)
-        configuration.showsCursor = true
-        configuration.capturesAudio = false
+        let configuration = Self.streamConfiguration(sourceWidth: sourceWidth, sourceHeight: sourceHeight)
 
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: outputQueue)
@@ -191,6 +180,25 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
             width: max(Int((Double(width) * scale).rounded()), 1),
             height: max(Int((Double(height) * scale).rounded()), 1)
         )
+    }
+
+    static func streamConfiguration(sourceWidth: Int, sourceHeight: Int) -> SCStreamConfiguration {
+        let streamSize = streamPixelSize(
+            width: sourceWidth,
+            height: sourceHeight,
+            maxLongEdge: max(maxStreamLongEdgePixels, 1)
+        )
+        let configuration = SCStreamConfiguration()
+        configuration.width = streamSize.width
+        configuration.height = streamSize.height
+        configuration.pixelFormat = kCVPixelFormatType_32BGRA
+        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 4)
+        configuration.showsCursor = true
+        configuration.capturesAudio = false
+        if #available(macOS 14.2, *) {
+            configuration.includeChildWindows = true
+        }
+        return configuration
     }
 }
 

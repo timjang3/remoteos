@@ -16,6 +16,18 @@ DerivedData
 .env
 .env.*
 !.env.example
+.envrc
+.direnv/
+.npmrc
+.netrc
+.pypirc
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.mobileprovision
 
 # Editor / OS
 *.swp

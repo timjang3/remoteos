@@ -1,0 +1,76 @@
+name: release-macos-hosted
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version string for the hosted app bundle
+        required: true
+        default: 0.1.0
+      build_number:
+        description: Optional build number override
+        required: false
+  release:
+    types:
+      - published
+
+jobs:
+  build-hosted-macos:
+    runs-on: macos-15
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare signing keychain
+        if: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 != '' }}
+        env:
+          CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          CERT_PATH="$RUNNER_TEMP/remoteos-signing.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/remoteos-signing.keychain-db"
+          echo "$CERTIFICATE_P12_BASE64" | base64 -D > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+
+      - name: Build hosted app bundle
+        env:
+          REMOTEOS_VERSION: ${{ github.event.release.tag_name || inputs.version }}
+          REMOTEOS_BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+          REMOTEOS_CONTROL_PLANE_BASE_URL: ${{ vars.REMOTEOS_HOSTED_CONTROL_PLANE_BASE_URL }}
+          REMOTEOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          REMOTEOS_NOTARY_APPLE_ID: ${{ secrets.APPLE_ID }}
+          REMOTEOS_NOTARY_APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          REMOTEOS_NOTARY_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          REMOTEOS_ARCHS: arm64 x86_64
+        run: |
+          set -euo pipefail
+          chmod +x apps/macos/scripts/package_hosted_app.sh
+          apps/macos/scripts/package_hosted_app.sh
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: remoteos-hosted-macos
+          path: |
+            dist/macos-hosted/*.zip
+            dist/macos-hosted/*.dmg
+            dist/macos-hosted/*.txt
+
+      - name: Attach artifacts to GitHub release
+        if: ${{ github.event_name == 'release' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/macos-hosted/*.zip
+            dist/macos-hosted/*.dmg
+            dist/macos-hosted/*.txt

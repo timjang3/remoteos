@@ -530,6 +530,12 @@ public struct AgentTurnStartResultPayload: Codable, Sendable, Equatable {
     public var userItem: AgentItemPayload
 }
 
+public struct AgentStateGetResultPayload: Codable, Sendable, Equatable {
+    public var turn: AgentTurnPayload?
+    public var items: [AgentItemPayload]
+    public var prompts: [AgentPromptPayload]
+}
+
 public struct AgentTurnCancelPayload: Codable, Sendable, Equatable {
     public var turnId: String
 }

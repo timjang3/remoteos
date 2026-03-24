@@ -1200,6 +1200,21 @@ export function App() {
     void clientRef.current.startStream(selectedWindowId).catch(() => {});
   }, [activeBrokerConnectionId, selectedWindowId]);
 
+  // Restore agent conversation state from host on reconnect
+  useEffect(() => {
+    if (activeBrokerConnectionId === 0 || !clientRef.current) return;
+
+    void clientRef.current.getAgentState().then((state) => {
+      startTransition(() => {
+        setAgentTurn(state.turn ?? null);
+        setAgentItems(state.items);
+        setAgentPrompts(state.prompts);
+        setPendingAgentSend(null);
+        setSubmittingPromptIds(new Set());
+      });
+    }).catch(() => {});
+  }, [activeBrokerConnectionId]);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({
       behavior: pendingAgentSend || agentTurn?.status === "running" ? "auto" : "smooth"
@@ -1542,80 +1557,84 @@ export function App() {
         ) : null}
 
         <div className="chat-composer">
-          <textarea
-            ref={chatInputRef}
-            className="chat-composer-input"
-            value={agentPrompt}
-            onChange={(event) => {
-              if (chatError) {
-                setChatError(null);
+          <div className={`chat-composer-bar${dictationStatus === "recording" ? " recording" : ""}`}>
+            <textarea
+              ref={chatInputRef}
+              className="chat-composer-input"
+              value={agentPrompt}
+              onChange={(event) => {
+                if (chatError) {
+                  setChatError(null);
+                }
+                setAgentPrompt(event.target.value);
+                const el = event.target;
+                el.style.height = "auto";
+                el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+              }}
+              onFocus={() => {
+                // Scroll chat to bottom when keyboard opens so latest messages stay visible
+                setTimeout(() => {
+                  chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+                }, 300);
+              }}
+              onKeyDown={handleAgentKeyDown}
+              disabled={!isAgentReady}
+              enterKeyHint="send"
+              placeholder={
+                isAgentReady
+                  ? "Ask agent anything"
+                  : hostStatus?.online === false || !isConnected
+                    ? "Connecting to your Mac..."
+                    : codexStatus?.state === "starting"
+                      ? "Preparing Codex..."
+                      : "Codex is unavailable..."
               }
-              setAgentPrompt(event.target.value);
-              const el = event.target;
-              el.style.height = "auto";
-              el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
-            }}
-            onFocus={() => {
-              // Scroll chat to bottom when keyboard opens so latest messages stay visible
-              setTimeout(() => {
-                chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-              }, 300);
-            }}
-            onKeyDown={handleAgentKeyDown}
-            disabled={!isAgentReady}
-            enterKeyHint="send"
-            placeholder={
-              isAgentReady
-                ? "Ask Codex to answer or act..."
-                : hostStatus?.online === false || !isConnected
-                  ? "Connecting to your Mac..."
-                  : codexStatus?.state === "starting"
-                    ? "Preparing Codex..."
-                    : "Codex is unavailable..."
-            }
-            rows={1}
-          />
-          {agentTurn?.status === "running" ? (
-            <button
-              className="chat-composer-stop"
-              onClick={() => void clientRef.current?.cancelAgent(agentTurn.id)}
-            >
-              <StopIcon />
-            </button>
-          ) : pendingAgentSend ? (
-            <button
-              className={`chat-composer-send chat-composer-send-pending ${isAgentStartPending ? "pending" : ""}`}
-              disabled
-            >
-              <div className="chat-composer-pending-spinner" />
-            </button>
-          ) : (
-            <>
-              {speechCapabilities?.transcriptionAvailable ? (
+              rows={1}
+            />
+            <div className="chat-composer-actions">
+              {agentTurn?.status === "running" ? (
                 <button
-                  className={`chat-composer-dictation ${dictationStatus === "recording" ? "recording" : ""}`}
-                  disabled={!isAgentReady || dictationStatus === "transcribing"}
-                  onClick={handleDictationToggle}
-                  aria-label={
-                    dictationStatus === "recording"
-                      ? "Stop dictation"
-                      : dictationStatus === "transcribing"
-                        ? "Transcribing"
-                        : "Start dictation"
-                  }
+                  className="chat-composer-stop"
+                  onClick={() => void clientRef.current?.cancelAgent(agentTurn.id)}
                 >
-                  {dictationStatus === "recording" ? <StopIcon /> : dictationStatus === "transcribing" ? <SpinnerIcon size={16} /> : <MicIcon />}
+                  <StopIcon />
                 </button>
-              ) : null}
-              <button
-                className="chat-composer-send"
-                disabled={!canSendAgentPrompt}
-                onClick={() => void handleAgent()}
-              >
-                <SendIcon />
-              </button>
-            </>
-          )}
+              ) : pendingAgentSend ? (
+                <button
+                  className={`chat-composer-send chat-composer-send-pending ${isAgentStartPending ? "pending" : ""}`}
+                  disabled
+                >
+                  <div className="chat-composer-pending-spinner" />
+                </button>
+              ) : (
+                <>
+                  {speechCapabilities?.transcriptionAvailable ? (
+                    <button
+                      className={`chat-composer-dictation ${dictationStatus === "recording" ? "recording" : ""}`}
+                      disabled={!isAgentReady || dictationStatus === "transcribing"}
+                      onClick={handleDictationToggle}
+                      aria-label={
+                        dictationStatus === "recording"
+                          ? "Stop dictation"
+                          : dictationStatus === "transcribing"
+                            ? "Transcribing"
+                            : "Start dictation"
+                      }
+                    >
+                      {dictationStatus === "recording" ? <StopIcon /> : dictationStatus === "transcribing" ? <SpinnerIcon size={16} /> : <MicIcon />}
+                    </button>
+                  ) : null}
+                  <button
+                    className="chat-composer-send"
+                    disabled={!canSendAgentPrompt}
+                    onClick={() => void handleAgent()}
+                  >
+                    <SendIcon />
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
         </div>
 
         {chatStatusMessage ? (

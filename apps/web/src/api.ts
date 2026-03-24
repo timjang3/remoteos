@@ -4,6 +4,7 @@ import type {
   AgentPromptResolved,
   AgentPromptResponse,
   SpeechCapabilities,
+  AgentStateGetResult,
   AgentTurnStartResult,
   AgentTurn,
   CodexStatus,
@@ -598,5 +599,9 @@ export class BrokerClient {
 
   async setAgentModel(modelId: string) {
     return this.request("agent.config.setModel", { modelId });
+  }
+
+  async getAgentState() {
+    return this.request<AgentStateGetResult>("agent.state.get", {});
   }
 }

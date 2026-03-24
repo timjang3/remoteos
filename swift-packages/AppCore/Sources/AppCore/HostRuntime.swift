@@ -1162,6 +1162,17 @@ public final class HostRuntime: ObservableObject {
             Task {
                 _ = await codexClient.prepareForTurns(forceStatusRefresh: true)
             }
+        case "agent.state.get":
+            let result = AgentStateGetResultPayload(
+                turn: agentTurn,
+                items: agentItems,
+                prompts: agentPrompts
+            )
+            let requestId = request.id ?? UUID().uuidString
+            let brokerClient = self.brokerClient
+            codexBrokerFanoutQueue.enqueue { [brokerClient] in
+                await brokerClient.sendSuccess(id: requestId, payload: result)
+            }
         default:
             await brokerClient.sendError(id: request.id, code: -32601, message: "Unknown method \(request.method)")
         }
@@ -1175,6 +1186,7 @@ public final class HostRuntime: ObservableObject {
             let turn = try await codexClient.startTurn(prompt: prompt, targetWindowID: selectedWindowID)
             agentTurn = turn
             let userItem = AgentItemPayload.userMessage(turnID: turn.id, prompt: prompt, timestamp: turn.startedAt)
+            upsertAgentItem(userItem)
             await brokerClient.sendSuccess(
                 id: requestID,
                 payload: AgentTurnStartResultPayload(turn: turn, userItem: userItem)

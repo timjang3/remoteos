@@ -36,6 +36,7 @@ export const rpcMethodSchema = z.enum([
   "agent.thread.reset",
   "agent.prompt.respond",
   "agent.config.setModel",
+  "agent.state.get",
   "windows.updated",
   "window.snapshot",
   "window.frame",
@@ -119,6 +120,13 @@ export const agentTurnStartResultSchema = z.object({
 });
 export type AgentTurnStartResult = z.infer<typeof agentTurnStartResultSchema>;
 
+export const agentStateGetResultSchema = z.object({
+  turn: agentTurnSchema.nullable(),
+  items: z.array(agentItemSchema),
+  prompts: z.array(agentPromptSchema)
+});
+export type AgentStateGetResult = z.infer<typeof agentStateGetResultSchema>;
+
 export const agentTurnCancelParamsSchema = z.object({
   turnId: z.string().min(1)
 });
@@ -145,7 +153,8 @@ export const rpcParamsByMethod = {
   "agent.turn.cancel": agentTurnCancelParamsSchema,
   "agent.thread.reset": agentThreadResetParamsSchema,
   "agent.prompt.respond": agentPromptRespondParamsSchema,
-  "agent.config.setModel": agentConfigSetModelParamsSchema
+  "agent.config.setModel": agentConfigSetModelParamsSchema,
+  "agent.state.get": z.object({}).default({})
 } as const;
 
 export const notificationParamsByMethod = {

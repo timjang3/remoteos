@@ -1030,9 +1030,6 @@ input, textarea {
 
 .chat-composer {
   flex-shrink: 0;
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
   padding: 10px 16px;
   padding-bottom: max(10px, calc(var(--safe-bottom) + 6px));
   padding-left: max(16px, var(--safe-left));
@@ -1041,41 +1038,86 @@ input, textarea {
   border-top: 1px solid var(--border);
 }
 
-.chat-composer-input {
-  flex: 1;
-  min-height: 44px;
-  max-height: 120px;
-  padding: 10px 14px;
-  border-radius: 22px;
+.chat-composer-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  min-height: 48px;
+  padding: 4px 4px 4px 16px;
+  border-radius: 24px;
   background: var(--bg);
   border: 1px solid var(--border);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.chat-composer-bar:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(232, 196, 184, 0.1);
+}
+
+.chat-composer-bar.recording {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.1);
+}
+
+.chat-composer-input {
+  flex: 1;
+  min-height: 40px;
+  max-height: 120px;
+  padding: 8px 0;
+  background: transparent;
+  border: none;
   color: var(--text);
   font-size: 16px;
   line-height: 1.4;
   resize: none;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  transition: border-color 0.2s;
-}
-
-.chat-composer-input:focus {
-  border-color: var(--accent);
+  outline: none;
 }
 
 .chat-composer-input::placeholder {
   color: var(--text-tertiary);
 }
 
+.chat-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .chat-composer-send,
-.chat-composer-dictation,
 .chat-composer-stop {
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s, transform 0.1s;
+}
+
+.chat-composer-dictation {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  transition: color 0.15s, background 0.15s;
+}
+
+.chat-composer-dictation:active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.chat-composer-dictation.recording {
+  color: var(--danger);
+  background: rgba(248, 113, 113, 0.12);
 }
 
 .chat-composer-send {
@@ -1083,23 +1125,15 @@ input, textarea {
   color: var(--bg);
 }
 
-.chat-composer-dictation {
-  background: rgba(232, 196, 184, 0.12);
-  color: var(--accent);
-  border: 1px solid rgba(232, 196, 184, 0.22);
-}
-
-.chat-composer-dictation.recording {
-  background: rgba(248, 113, 113, 0.12);
-  color: var(--danger);
-  border-color: rgba(248, 113, 113, 0.24);
-}
-
 .chat-composer-send:active {
   opacity: 0.85;
+  transform: scale(0.95);
 }
 
-.chat-composer-send:disabled,
+.chat-composer-send:disabled {
+  opacity: 0.3;
+}
+
 .chat-composer-dictation:disabled {
   opacity: 0.3;
 }
@@ -1111,7 +1145,7 @@ input, textarea {
 }
 
 .chat-composer-send-pending.pending {
-  box-shadow: 0 0 0 6px rgba(232, 196, 184, 0.08);
+  box-shadow: 0 0 0 5px rgba(232, 196, 184, 0.08);
 }
 
 .chat-composer-pending-spinner {
@@ -1130,6 +1164,7 @@ input, textarea {
 
 .chat-composer-stop:active {
   opacity: 0.85;
+  transform: scale(0.95);
 }
 
 @keyframes composer-spin {

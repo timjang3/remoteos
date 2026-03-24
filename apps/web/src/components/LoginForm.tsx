@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 
 import type { ControlPlaneAuthClient } from "../authClient.js";
+import { RemoteOSBrandHeader } from "./RemoteOSBranding.js";
 
 function GoogleLogo() {
   return (
@@ -48,11 +49,7 @@ export function LoginForm({ authClient, googleAuthEnabled }: LoginFormProps) {
   return (
     <div className="auth-screen">
       <div className="auth-card">
-        <div className="pairing-brand auth-brand">
-          <div className="pairing-brand-icon">R</div>
-          <h1>RemoteOS</h1>
-          <p>Sign in to continue</p>
-        </div>
+        <RemoteOSBrandHeader className="auth-brand" title="RemoteOS" subtitle="Sign in to continue" />
 
         <div className="auth-socials">
           <button

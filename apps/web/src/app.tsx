@@ -27,6 +27,7 @@ import {
 import { createControlPlaneAuthClient } from "./authClient.js";
 
 import { BottomSheet } from "./components/BottomSheet.js";
+import { RemoteOSBrandHeader, RemoteOSLogoMark } from "./components/RemoteOSBranding.js";
 import {
   getAgentItemPresentation,
   getCodexHeaderChips,
@@ -379,6 +380,9 @@ function ChatTranscript({
         <div className="chat-empty-state">
           {!selectedWindow ? (
             <>
+              <div className="chat-empty-brand">
+                <RemoteOSLogoMark decorative size={38} />
+              </div>
               <p className="chat-empty-title">Welcome to RemoteOS</p>
               <p className="chat-empty-subtitle">
                 Select a window to get started, or ask the agent anything.
@@ -1199,11 +1203,10 @@ export function App() {
   if (!hasToken) {
     return (
       <div className="pairing-screen">
-        <div className="pairing-brand">
-          <div className="pairing-brand-icon">R</div>
-          <h1>RemoteOS</h1>
-          <p>Control your Mac from anywhere. Enter the pairing code shown on your computer.</p>
-        </div>
+        <RemoteOSBrandHeader
+          title="RemoteOS"
+          subtitle="Control your Mac from anywhere. Enter the pairing code shown on your computer."
+        />
         <div className="pairing-form">
           <input
             className="pairing-input code-input"

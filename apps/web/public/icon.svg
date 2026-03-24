@@ -1,13 +1,25 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">RemoteOS icon</title>
+  <desc id="desc">A sleek phone and cursor mark on a dark rounded tile.</desc>
   <defs>
-    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
-      <stop offset="0%" stop-color="#7de2d1" />
-      <stop offset="100%" stop-color="#1f4f96" />
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#18181b" />
+      <stop offset="100%" stop-color="#0e0e11" />
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="120" fill="#081119" />
-  <path
-    fill="url(#bg)"
-    d="M104 150c0-24.301 19.699-44 44-44h216c24.301 0 44 19.699 44 44v212c0 24.301-19.699 44-44 44H148c-24.301 0-44-19.699-44-44V150Zm44 0v212h216V150H148Zm52 40h112c22.091 0 40 17.909 40 40v52c0 22.091-17.909 40-40 40H200c-22.091 0-40-17.909-40-40v-52c0-22.091 17.909-40 40-40Z"
-  />
+  <rect x="24" y="24" width="464" height="464" rx="120" fill="url(#tile)" />
+  <g transform="translate(86 68)">
+    <rect x="0" y="0" width="184" height="376" rx="56" fill="#f3eee8" />
+    <rect x="32" y="34" width="120" height="308" rx="22" fill="#141418" />
+  </g>
+  <g transform="translate(250 194) scale(8.3)">
+    <path
+      d="M4 3.5C3.8 3.5 3.6 3.6 3.5 3.8C3.4 4 3.4 4.2 3.5 4.4L10 19.5C10.1 19.8 10.4 20 10.7 20C11 20 11.3 19.8 11.4 19.5L13 13L19.5 11.4C19.8 11.3 20 11 20 10.7C20 10.4 19.8 10.1 19.5 10L4.4 3.5C4.3 3.5 4.15 3.5 4 3.5Z"
+      fill="#d6aa9b"
+      stroke="#d6aa9b"
+      stroke-width="1.2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+  </g>
 </svg>

@@ -12,6 +12,11 @@
   --accent: #e8c4b8;
   --accent-dim: rgba(232, 196, 184, 0.10);
   --accent-glow: rgba(232, 196, 184, 0.20);
+  --logo-tile: linear-gradient(180deg, rgba(24, 24, 27, 0.98) 0%, rgba(14, 14, 17, 0.94) 100%);
+  --logo-tile-border: rgba(255, 255, 255, 0.08);
+  --logo-phone-shell: #f3eee8;
+  --logo-phone-screen: #141418;
+  --logo-cursor: #d6aa9b;
   --success: #4ade80;
   --warning: #facc15;
   --danger: #f87171;
@@ -91,20 +96,30 @@ input, textarea {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin-bottom: 48px;
 }
 
-.pairing-brand-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, var(--accent), #c49a8a);
+.pairing-brand-mark {
+  width: 72px;
+  height: 72px;
+  border-radius: 22px;
+  background: var(--logo-tile);
+  border: 1px solid var(--logo-tile-border);
   display: grid;
   place-items: center;
-  font-size: 24px;
-  color: var(--bg);
-  font-weight: 700;
+  box-shadow:
+    0 20px 40px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.pairing-brand-logo {
+  display: block;
+  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.18));
+}
+
+.remoteos-logo-mark {
+  display: block;
 }
 
 .pairing-brand h1 {
@@ -538,6 +553,20 @@ input, textarea {
   text-align: center;
   padding: 48px 24px;
   flex: 1;
+}
+
+.chat-empty-brand {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 18px;
+  border-radius: 20px;
+  background: var(--logo-tile);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: grid;
+  place-items: center;
+  box-shadow:
+    0 18px 34px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .chat-empty-title {

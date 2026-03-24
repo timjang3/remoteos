@@ -9,6 +9,7 @@ struct RemoteOSHostApp: App {
 
     init() {
         DefaultConfigurationRegistrar.register()
+        RemoteOSBranding.applyDockIcon()
         let runtime = RuntimeHolder.makeRuntime()
         _runtime = StateObject(wrappedValue: runtime)
         settingsWindowController = SettingsWindowController(runtime: runtime)
@@ -16,12 +17,14 @@ struct RemoteOSHostApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("RemoteOS", systemImage: "rectangle.3.group.bubble.left") {
+        MenuBarExtra {
             ContentView(
                 runtime: runtime,
                 openSettingsWindow: { settingsWindowController.show() }
             )
                 .frame(width: 360, height: 600)
+        } label: {
+            RemoteOSMenuBarIcon()
         }
         .menuBarExtraStyle(.window)
     }
@@ -492,6 +495,17 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .help("Settings")
+
+            Button {
+                runtime.stop()
+                NSApplication.shared.terminate(nil)
+            } label: {
+                Image(systemName: "power")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Quit RemoteOS")
         }
     }
 

@@ -18,6 +18,7 @@ import {
 } from "../authClient.js";
 import { logoutWebSession } from "../session.js";
 import { LoginForm } from "./LoginForm.js";
+import { RemoteOSBrandHeader } from "./RemoteOSBranding.js";
 
 type AuthGateProps = {
   children: React.ReactNode;
@@ -96,11 +97,11 @@ function HostedEnrollmentView({
   return (
     <div className="auth-screen">
       <div className="auth-card auth-card-wide">
-        <div className="pairing-brand auth-brand">
-          <div className="pairing-brand-icon">R</div>
-          <h1>Authorize This Mac</h1>
-          <p>{session.data?.user.email ?? "Signed in"}</p>
-        </div>
+        <RemoteOSBrandHeader
+          className="auth-brand"
+          title="Authorize This Mac"
+          subtitle={session.data?.user.email ?? "Signed in"}
+        />
 
         {isLoading ? (
           <div style={{ display: "flex", justifyContent: "center", padding: "24px 0" }}>
@@ -219,11 +220,7 @@ export function AuthGate({ children }: AuthGateProps) {
     return (
       <div className="auth-screen">
         <div className="auth-card">
-          <div className="pairing-brand auth-brand">
-            <div className="pairing-brand-icon">R</div>
-            <h1>RemoteOS</h1>
-            <p>{healthError}</p>
-          </div>
+          <RemoteOSBrandHeader className="auth-brand" title="RemoteOS" subtitle={healthError} />
         </div>
       </div>
     );
@@ -233,10 +230,7 @@ export function AuthGate({ children }: AuthGateProps) {
     return (
       <div className="auth-screen">
         <div className="auth-card">
-          <div className="pairing-brand auth-brand">
-            <div className="pairing-brand-icon">R</div>
-            <h1>RemoteOS</h1>
-          </div>
+          <RemoteOSBrandHeader className="auth-brand" title="RemoteOS" />
           <div style={{ display: "flex", justifyContent: "center", padding: "8px 0" }}>
             <div className="auth-loading-spinner" />
           </div>
@@ -253,10 +247,7 @@ export function AuthGate({ children }: AuthGateProps) {
     return (
       <div className="auth-screen">
         <div className="auth-card">
-          <div className="pairing-brand auth-brand">
-            <div className="pairing-brand-icon">R</div>
-            <h1>RemoteOS</h1>
-          </div>
+          <RemoteOSBrandHeader className="auth-brand" title="RemoteOS" />
           <div style={{ display: "flex", justifyContent: "center", padding: "8px 0" }}>
             <div className="auth-loading-spinner" />
           </div>

@@ -1024,6 +1024,12 @@ export function App() {
     setSelectedWindowId(windowId);
     setFrame(undefined);
     setShowWindows(false);
+    setAgentItems([]);
+    setAgentTurn(null);
+    setAgentPrompts([]);
+    setPendingAgentSend(null);
+    setSubmittingPromptIds(new Set());
+    await clientRef.current.resetAgentThread();
     await clientRef.current.selectWindow(windowId);
   }
 

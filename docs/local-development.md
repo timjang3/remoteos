@@ -71,6 +71,15 @@ The web client auto-detects the control-plane at `<YOUR_IP>:8787` based on the h
 2. Enter it in the web UI on your phone
 3. You're connected
 
+## Dictation on Mobile Web
+
+Microphone dictation in the web client requires a **secure context**. In practice that means:
+
+- `https://...`
+- `http://localhost`
+
+Plain LAN URLs like `http://192.168.x.x:5173` are useful for pairing and general testing, but mobile browsers will not allow microphone capture for dictation there. Use HTTPS if you want to test the dictation button from a phone.
+
 ## Ports
 
 | Service        | Port | Bind address |

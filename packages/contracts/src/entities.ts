@@ -25,6 +25,17 @@ export type PermissionStatus = z.infer<typeof permissionStatusSchema>;
 export const hostModeSchema = z.enum(["hosted", "direct"]);
 export type HostMode = z.infer<typeof hostModeSchema>;
 
+export const speechProviderSchema = z.enum(["openai"]);
+export type SpeechProvider = z.infer<typeof speechProviderSchema>;
+
+export const speechCapabilitiesSchema = z.object({
+  transcriptionAvailable: z.boolean(),
+  provider: nullableWire(speechProviderSchema),
+  maxDurationMs: z.number().int().positive(),
+  maxUploadBytes: z.number().int().positive()
+});
+export type SpeechCapabilities = z.infer<typeof speechCapabilitiesSchema>;
+
 export const deviceSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),

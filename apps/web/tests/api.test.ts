@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { BrokerClient, claimPairing, getBootstrap, resolveControlPlaneBaseUrl } from "../src/api";
+import { BrokerClient, claimPairing, createSpeechTranscription, getBootstrap, resolveControlPlaneBaseUrl } from "../src/api";
 
 const originalWindow = globalThis.window;
 const originalFetch = globalThis.fetch;
@@ -137,7 +137,13 @@ describe("api base URL handling", () => {
               accessibility: "granted",
               directUrl: null
             },
-            wsUrl: "ws://192.168.1.25:8787/ws/client?clientToken=token_1"
+            wsUrl: "ws://192.168.1.25:8787/ws/client?clientToken=token_1",
+            speech: {
+              transcriptionAvailable: true,
+              provider: "openai",
+              maxDurationMs: 120000,
+              maxUploadBytes: 10485760
+            }
           }),
           {
             status: 200,
@@ -164,6 +170,52 @@ describe("api base URL handling", () => {
     );
     expect(result.baseUrl).toBe("http://192.168.1.25:8787");
     expect(result.data.device.id).toBe("device_1");
+  });
+
+  it("uploads dictation audio as multipart form data", async () => {
+    installWindow("http://192.168.1.25:5173/");
+
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      expect(init?.body).toBeInstanceOf(FormData);
+      const form = init?.body as FormData;
+      expect(form.get("clientToken")).toBe("token_1");
+      expect(form.get("language")).toBe("en-US");
+      expect(form.get("durationMs")).toBe("2500");
+
+      return new Response(
+        JSON.stringify({
+          text: "hello world",
+          provider: "openai",
+          model: "gpt-4o-transcribe"
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    });
+
+    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+
+    const result = await createSpeechTranscription("http://192.168.1.25:8787", {
+      clientToken: "token_1",
+      audio: new Blob(["audio"], { type: "audio/webm" }),
+      filename: "dictation.webm",
+      language: "en-US",
+      durationMs: 2500
+    });
+
+    expect(result.data.text).toBe("hello world");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://192.168.1.25:8787/speech/transcriptions",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.any(FormData)
+      })
+    );
   });
 
   it("rejects pending broker requests when the socket closes", async () => {

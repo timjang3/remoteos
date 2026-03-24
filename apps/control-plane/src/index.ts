@@ -2,6 +2,7 @@ import "dotenv/config";
 
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
 import rateLimit from "@fastify/rate-limit";
 import websocket from "@fastify/websocket";
 import { fileURLToPath } from "node:url";
@@ -14,6 +15,7 @@ import { loadConfig } from "./config.js";
 import { createDb } from "./db/index.js";
 import { PostgresBrokerStore } from "./postgresStore.js";
 import { registerRoutes } from "./routes.js";
+import { createSpeechTranscriptionProvider } from "./speech.js";
 import { MemoryBrokerStore } from "./store.js";
 import { registerWsBroker } from "./wsBroker.js";
 import { WsTicketStore } from "./wsTicketStore.js";
@@ -28,10 +30,17 @@ const db = config.databaseUrl ? createDb(config.databaseUrl) : null;
 const store = db ? new PostgresBrokerStore(db, config.publicPairBaseUrl) : new MemoryBrokerStore();
 const auth = config.authMode === "required" && db ? createAuth(db, config) : null;
 const authMiddleware = auth ? requireAuth(auth) : undefined;
+const speechProvider = createSpeechTranscriptionProvider(config);
 
 await app.register(cors, {
   origin: config.authMode === "required" ? config.allowedOrigins : true,
   credentials: config.authMode === "required"
+});
+await app.register(multipart, {
+  limits: {
+    files: 1,
+    fileSize: config.speech.maxUploadBytes
+  }
 });
 await app.register(rateLimit);
 await app.register(websocket);
@@ -49,7 +58,8 @@ await registerRoutes(app, {
   store,
   config,
   ...(authMiddleware ? { requireAuth: authMiddleware } : {}),
-  wsTickets
+  wsTickets,
+  speechProvider
 });
 await registerWsBroker(app, {
   store,

@@ -3,6 +3,7 @@ import type {
   AgentPrompt,
   AgentPromptResolved,
   AgentPromptResponse,
+  SpeechCapabilities,
   AgentTurnStartResult,
   AgentTurn,
   CodexStatus,
@@ -51,6 +52,7 @@ export type BootstrapPayload = {
   windows: WindowDescriptor[];
   status: HostStatus;
   wsUrl: string;
+  speech: SpeechCapabilities;
 };
 
 export type ControlPlaneAuthMode = "none" | "required";
@@ -60,6 +62,12 @@ export type HealthPayload = {
   now: string;
   authMode: ControlPlaneAuthMode;
   googleAuthEnabled: boolean;
+};
+
+export type SpeechTranscriptionPayload = {
+  text: string;
+  provider: string;
+  model: string;
 };
 
 const apiBaseUrlStorageKey = "remoteos.controlPlaneBaseUrl";
@@ -365,6 +373,32 @@ export async function createWsTicket(
       "content-type": "application/json"
     },
     body: JSON.stringify(body)
+  });
+}
+
+export async function createSpeechTranscription(
+  baseUrl: string,
+  body: {
+    clientToken: string;
+    audio: Blob;
+    filename: string;
+    language?: string;
+    durationMs?: number;
+  }
+) {
+  const form = new FormData();
+  form.set("clientToken", body.clientToken);
+  form.set("audio", body.audio, body.filename);
+  if (body.language) {
+    form.set("language", body.language);
+  }
+  if (body.durationMs) {
+    form.set("durationMs", String(Math.round(body.durationMs)));
+  }
+
+  return fetchControlPlaneJson<SpeechTranscriptionPayload>(baseUrl, "/speech/transcriptions", {
+    method: "POST",
+    body: form
   });
 }
 

@@ -24,4 +24,18 @@ describe("loadConfig", () => {
     expect(config.publicHttpBaseUrl).toBe("https://broker.remoteos.dev");
     expect(config.publicWsBaseUrl).toBe("wss://broker.remoteos.dev");
   });
+
+  it("enables OpenAI speech transcription when an API key is configured", () => {
+    const config = loadConfig({
+      PORT: "8787",
+      PUBLIC_PAIR_BASE_URL: "http://localhost:5173",
+      OPENAI_API_KEY: "sk-test"
+    });
+
+    expect(config.speech.provider).toBe("openai");
+    expect(config.speech.transcriptionAvailable).toBe(true);
+    expect(config.speech.model).toBe("gpt-4o-transcribe");
+    expect(config.speech.maxDurationMs).toBe(120000);
+    expect(config.speech.maxUploadBytes).toBe(10485760);
+  });
 });

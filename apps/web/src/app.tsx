@@ -4,6 +4,7 @@ import type {
   AgentTurn,
   CodexStatus,
   HostStatus,
+  SpeechCapabilities,
   SemanticSnapshot,
   TraceEvent,
   WindowDescriptor,
@@ -17,6 +18,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, useTransition
 import {
   BrokerClient,
   claimPairing,
+  createSpeechTranscription,
   createWsTicket,
   getBootstrap,
   getResolvedControlPlaneAuthMode,
@@ -44,6 +46,11 @@ import {
   logoutWebSession,
   setStoredToken
 } from "./session.js";
+import {
+  extensionForDictationMimeType,
+  insertDictationText,
+  pickDictationMimeType
+} from "./dictation.js";
 import "./app.css";
 
 const AVAILABLE_MODELS = [
@@ -172,6 +179,7 @@ function createPendingSendId() {
 
 type ConnectionState = "idle" | "pairing" | "bootstrapping" | "connecting" | "connected" | "error";
 type PromptAction = "submit" | "accept" | "decline" | "cancel";
+type DictationStatus = "idle" | "recording" | "transcribing";
 
 function WindowsIcon() {
   return (
@@ -189,6 +197,17 @@ function SendIcon() {
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M22 2L11 13" />
       <path d="M22 2l-7 20-4-9-9-4 20-7z" />
+    </svg>
+  );
+}
+
+function MicIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z" />
+      <path d="M19 11a7 7 0 0 1-14 0" />
+      <path d="M12 18v3" />
+      <path d="M8 21h8" />
     </svg>
   );
 }
@@ -621,6 +640,8 @@ export function App() {
   const [hostStatus, setHostStatus] = useState<HostStatus | null>(null);
   const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
   const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
+  const [speechCapabilities, setSpeechCapabilities] = useState<SpeechCapabilities | null>(null);
+  const [dictationStatus, setDictationStatus] = useState<DictationStatus>("idle");
 
   const [showWindows, setShowWindows] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
@@ -638,6 +659,10 @@ export function App() {
   const clientRef = useRef<BrokerClient | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const dictationChunksRef = useRef<Blob[]>([]);
+  const dictationStartedAtRef = useRef<number | null>(null);
   const previousBrokerConnectionIdRef = useRef(0);
   const showHomeStateRef = useRef(false);
 
@@ -766,7 +791,16 @@ export function App() {
     [codexStatus]
   );
 
+  const releaseDictationMedia = useCallback(() => {
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaRecorderRef.current = null;
+    mediaStreamRef.current = null;
+  }, []);
+
   const clearClientSessionState = useCallback(() => {
+    releaseDictationMedia();
+    dictationChunksRef.current = [];
+    dictationStartedAtRef.current = null;
     clientRef.current?.disconnect();
     clientRef.current = null;
     setWindows([]);
@@ -784,6 +818,8 @@ export function App() {
     setHostStatus(null);
     setCodexStatus(null);
     setTraceEvents([]);
+    setSpeechCapabilities(null);
+    setDictationStatus("idle");
     setShowWindows(false);
     setShowModelPicker(false);
     showHomeStateRef.current = false;
@@ -791,7 +827,7 @@ export function App() {
     setActiveBrokerConnectionId(0);
     previousBrokerConnectionIdRef.current = 0;
     setConnectionState("idle");
-  }, []);
+  }, [releaseDictationMedia]);
 
   const resetExpiredSession = useCallback((message: string) => {
     clearStoredToken();
@@ -817,6 +853,7 @@ export function App() {
         setWindows(payload.windows);
         setHostStatus(payload.status);
         setCodexStatus(payload.status.codex);
+        setSpeechCapabilities(payload.speech);
         setSelectedWindowId(payload.status.selectedWindowId ?? null);
         showHomeStateRef.current = false;
         setShowHomeState(false);
@@ -945,6 +982,192 @@ export function App() {
     };
   }, [controlPlaneBaseUrl, resetExpiredSession]);
 
+  useEffect(() => {
+    return () => {
+      releaseDictationMedia();
+    };
+  }, [releaseDictationMedia]);
+
+  const resizeChatComposer = useCallback(() => {
+    if (!chatInputRef.current) {
+      return;
+    }
+
+    chatInputRef.current.style.height = "auto";
+    chatInputRef.current.style.height = `${Math.min(chatInputRef.current.scrollHeight, 120)}px`;
+  }, []);
+
+  const insertTranscriptIntoComposer = useCallback((transcript: string) => {
+    const cleanTranscript = transcript.trim();
+    if (!cleanTranscript) {
+      setChatError("No speech was detected. Try again.");
+      return;
+    }
+
+    const textarea = chatInputRef.current;
+    let nextSelection = 0;
+    setAgentPrompt((current) => {
+      const selectionStart = textarea?.selectionStart ?? current.length;
+      const selectionEnd = textarea?.selectionEnd ?? selectionStart;
+      const next = insertDictationText(current, cleanTranscript, selectionStart, selectionEnd);
+      nextSelection = next.selection;
+      return next.text;
+    });
+
+    requestAnimationFrame(() => {
+      if (!chatInputRef.current) {
+        return;
+      }
+
+      chatInputRef.current.focus();
+      chatInputRef.current.setSelectionRange(nextSelection, nextSelection);
+      resizeChatComposer();
+    });
+  }, [resizeChatComposer]);
+
+  function dictationUnavailableMessage() {
+    if (typeof window !== "undefined" && !window.isSecureContext) {
+      return "Dictation requires HTTPS or localhost.";
+    }
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      return "Microphone access is unavailable in this browser.";
+    }
+    if (typeof MediaRecorder === "undefined") {
+      return "This browser does not support audio recording.";
+    }
+
+    return null;
+  }
+
+  async function handleStartDictation() {
+    if (!speechCapabilities?.transcriptionAvailable) {
+      return;
+    }
+
+    const unavailableMessage = dictationUnavailableMessage();
+    if (unavailableMessage) {
+      setChatError(unavailableMessage);
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true
+      });
+      const mimeType = pickDictationMimeType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+
+      dictationChunksRef.current = [];
+      dictationStartedAtRef.current = Date.now();
+      mediaRecorderRef.current = recorder;
+      mediaStreamRef.current = stream;
+
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data.size > 0) {
+          dictationChunksRef.current.push(event.data);
+        }
+      });
+
+      recorder.start();
+      setChatError(null);
+      setDictationStatus("recording");
+    } catch (error) {
+      releaseDictationMedia();
+
+      const message =
+        error instanceof DOMException && error.name === "NotAllowedError"
+          ? "Microphone permission was denied."
+          : error instanceof DOMException && error.name === "NotFoundError"
+            ? "No microphone was found on this device."
+            : error instanceof Error
+              ? error.message
+              : "Failed to start dictation.";
+      setChatError(message);
+      setDictationStatus("idle");
+    }
+  }
+
+  async function handleStopDictation() {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") {
+      setDictationStatus("idle");
+      return;
+    }
+
+    setDictationStatus("transcribing");
+
+    try {
+      const audioBlob = await new Promise<Blob>((resolve, reject) => {
+        const handleStop = () => {
+          recorder.removeEventListener("error", handleError);
+          const resolvedMimeType = recorder.mimeType || dictationChunksRef.current[0]?.type || "audio/webm";
+          resolve(new Blob(dictationChunksRef.current, { type: resolvedMimeType }));
+        };
+        const handleError = () => {
+          recorder.removeEventListener("stop", handleStop);
+          reject(new Error("Recording failed."));
+        };
+
+        recorder.addEventListener("stop", handleStop, { once: true });
+        recorder.addEventListener("error", handleError, { once: true });
+        recorder.stop();
+      });
+
+      releaseDictationMedia();
+
+      const durationMs =
+        dictationStartedAtRef.current === null
+          ? undefined
+          : Date.now() - dictationStartedAtRef.current;
+      dictationChunksRef.current = [];
+      dictationStartedAtRef.current = null;
+
+      if (durationMs && speechCapabilities && durationMs > speechCapabilities.maxDurationMs) {
+        throw new Error(`Dictation is limited to ${Math.round(speechCapabilities.maxDurationMs / 1000)} seconds.`);
+      }
+
+      if (audioBlob.size === 0) {
+        throw new Error("Recorded audio was empty.");
+      }
+
+      const clientToken = getStoredToken();
+      if (!clientToken) {
+        throw new Error("This client session expired. Pair again with the code shown on your Mac.");
+      }
+
+      const result = await createSpeechTranscription(controlPlaneBaseUrl, {
+        clientToken,
+        audio: audioBlob,
+        filename: `dictation.${extensionForDictationMimeType(audioBlob.type || recorder.mimeType || "audio/webm")}`,
+        ...(typeof navigator === "undefined" ? {} : { language: navigator.language }),
+        ...(durationMs ? { durationMs } : {})
+      });
+      storeControlPlaneBaseUrl(result.baseUrl);
+      insertTranscriptIntoComposer(result.data.text);
+      setChatError(null);
+      setDictationStatus("idle");
+    } catch (error) {
+      releaseDictationMedia();
+      dictationChunksRef.current = [];
+      dictationStartedAtRef.current = null;
+      setDictationStatus("idle");
+      setChatError(error instanceof Error ? error.message : "Failed to transcribe audio.");
+    }
+  }
+
+  function handleDictationToggle() {
+    if (dictationStatus === "transcribing" || pendingAgentSend || agentTurn?.status === "running") {
+      return;
+    }
+
+    if (dictationStatus === "recording") {
+      void handleStopDictation();
+      return;
+    }
+
+    void handleStartDictation();
+  }
+
   const refreshSemanticSnapshot = useCallback(async (windowId: number) => {
     if (!clientRef.current) return;
     try {
@@ -1059,7 +1282,7 @@ export function App() {
 
   async function handleAgent() {
     const prompt = agentPrompt.trim();
-    if (!prompt || pendingAgentSend || agentTurn?.status === "running") return;
+    if (!prompt || pendingAgentSend || agentTurn?.status === "running" || dictationStatus !== "idle") return;
 
     if (!clientRef.current || connectionState !== "connected" || hostStatus?.online === false) {
       setChatError("Connecting to your Mac. Wait a moment and try again.");
@@ -1076,9 +1299,7 @@ export function App() {
     };
     setPendingAgentSend(pendingSend);
     setAgentPrompt("");
-    if (chatInputRef.current) {
-      chatInputRef.current.style.height = "auto";
-    }
+    resizeChatComposer();
     const broker = clientRef.current;
 
     startAgentStartTransition(async () => {
@@ -1194,7 +1415,7 @@ export function App() {
     codexStatus?.state === "running";
   const isAgentReady = isConnected && !!clientRef.current && hostStatus?.online !== false && isCodexReady;
   const isAgentBusy = pendingAgentSend !== null || agentTurn?.status === "running";
-  const canSendAgentPrompt = isAgentReady && !!agentPrompt.trim() && !isAgentBusy;
+  const canSendAgentPrompt = isAgentReady && !!agentPrompt.trim() && !isAgentBusy && dictationStatus === "idle";
   const chatStatusMessage =
     chatError ??
     agentTurn?.error ??
@@ -1369,13 +1590,31 @@ export function App() {
               <div className="chat-composer-pending-spinner" />
             </button>
           ) : (
-            <button
-              className="chat-composer-send"
-              disabled={!canSendAgentPrompt}
-              onClick={() => void handleAgent()}
-            >
-              <SendIcon />
-            </button>
+            <>
+              {speechCapabilities?.transcriptionAvailable ? (
+                <button
+                  className={`chat-composer-dictation ${dictationStatus === "recording" ? "recording" : ""}`}
+                  disabled={!isAgentReady || dictationStatus === "transcribing"}
+                  onClick={handleDictationToggle}
+                  aria-label={
+                    dictationStatus === "recording"
+                      ? "Stop dictation"
+                      : dictationStatus === "transcribing"
+                        ? "Transcribing"
+                        : "Start dictation"
+                  }
+                >
+                  {dictationStatus === "recording" ? <StopIcon /> : dictationStatus === "transcribing" ? <SpinnerIcon size={16} /> : <MicIcon />}
+                </button>
+              ) : null}
+              <button
+                className="chat-composer-send"
+                disabled={!canSendAgentPrompt}
+                onClick={() => void handleAgent()}
+              >
+                <SendIcon />
+              </button>
+            </>
           )}
         </div>
 

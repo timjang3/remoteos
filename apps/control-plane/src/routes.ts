@@ -3,6 +3,13 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import type { ControlPlaneConfig } from "./config.js";
+import {
+  buildSpeechCapabilities,
+  extensionForSpeechMimeType,
+  normalizeSpeechMimeType,
+  supportedSpeechMimeTypes
+} from "./speech.js";
+import type { SpeechTranscriptionProvider } from "./speech.js";
 import type { BrokerStore } from "./storeInterface.js";
 import type { WsTicketStore } from "./wsTicketStore.js";
 
@@ -38,6 +45,12 @@ const wsTicketBodySchema = z.discriminatedUnion("type", [
   })
 ]);
 
+const speechTranscriptionFieldsSchema = z.object({
+  clientToken: z.string().min(1),
+  language: z.string().trim().min(2).max(32).optional(),
+  durationMs: z.coerce.number().int().positive().optional()
+});
+
 function hostWsUrl(config: ControlPlaneConfig, registration: { deviceId: string; deviceSecret: string }) {
   if (config.authMode === "required") {
     return `${config.publicWsBaseUrl}/ws/host`;
@@ -60,6 +73,21 @@ function isPendingRegistration(
   return "approvalRequired" in registration;
 }
 
+function multipartFieldValue(field: unknown) {
+  if (Array.isArray(field)) {
+    return multipartFieldValue(field[0]);
+  }
+
+  return (
+    typeof field === "object"
+    && field !== null
+    && "value" in field
+    && typeof field.value === "string"
+  )
+    ? field.value
+    : undefined;
+}
+
 export async function registerRoutes(
   app: FastifyInstance,
   options: {
@@ -67,11 +95,13 @@ export async function registerRoutes(
     config: ControlPlaneConfig;
     requireAuth?: (request: any, reply: any) => Promise<unknown>;
     wsTickets: WsTicketStore;
+    speechProvider: SpeechTranscriptionProvider | null;
   }
 ) {
   const {
     config,
     requireAuth,
+    speechProvider,
     store,
     wsTickets
   } = options;
@@ -228,11 +258,98 @@ export async function registerRoutes(
         const bootstrap = await store.getBootstrap(token, request.userId ?? null);
         return reply.send({
           ...bootstrap,
-          wsUrl: clientWsUrl(config, token)
+          wsUrl: clientWsUrl(config, token),
+          speech: buildSpeechCapabilities(config)
         });
       } catch (error) {
         return reply.code(401).send({
           error: error instanceof Error ? error.message : "Unknown client token"
+        });
+      }
+    }
+  );
+
+  app.post(
+    "/speech/transcriptions",
+    {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: 60_000
+        }
+      },
+      ...(requireAuth ? { preHandler: requireAuth } : {})
+    },
+    async (request, reply) => {
+      if (!speechProvider || !config.speech.transcriptionAvailable) {
+        return reply.code(503).send({
+          error: "Speech transcription is unavailable"
+        });
+      }
+
+      try {
+        const upload = await request.file();
+        if (!upload) {
+          return reply.code(400).send({
+            error: "Missing audio upload"
+          });
+        }
+
+        const fields = speechTranscriptionFieldsSchema.parse({
+          clientToken: multipartFieldValue(upload.fields.clientToken),
+          language: multipartFieldValue(upload.fields.language),
+          durationMs: multipartFieldValue(upload.fields.durationMs)
+        });
+
+        const session = await store.getClientSession(fields.clientToken);
+        if (!session || (request.userId && session.userId && session.userId !== request.userId)) {
+          return reply.code(401).send({
+            error: "Unauthorized client"
+          });
+        }
+
+        const normalizedMimeType = normalizeSpeechMimeType(upload.mimetype);
+        if (!supportedSpeechMimeTypes.has(normalizedMimeType)) {
+          return reply.code(400).send({
+            error: `Unsupported audio type: ${upload.mimetype}`
+          });
+        }
+
+        if (fields.durationMs && fields.durationMs > config.speech.maxDurationMs) {
+          return reply.code(400).send({
+            error: `Audio duration exceeds ${config.speech.maxDurationMs}ms`
+          });
+        }
+
+        const audio = await upload.toBuffer();
+        if (audio.byteLength === 0) {
+          return reply.code(400).send({
+            error: "Uploaded audio was empty"
+          });
+        }
+        if (audio.byteLength > config.speech.maxUploadBytes) {
+          return reply.code(413).send({
+            error: "Uploaded audio exceeds the configured size limit"
+          });
+        }
+
+        const filename = upload.filename || `dictation.${extensionForSpeechMimeType(normalizedMimeType)}`;
+        const result = await speechProvider.transcribe({
+          audio,
+          mimeType: normalizedMimeType,
+          filename,
+          ...(fields.language ? { language: fields.language } : {})
+        });
+
+        return reply.send(result);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to transcribe audio";
+        const statusCode =
+          /reach fileSize limit|too large/i.test(message) ? 413 :
+          /multipart/i.test(message) ? 400 :
+          /OpenAI transcription failed/i.test(message) ? 502 : 500;
+        return reply.code(statusCode).send({
+          error: message
         });
       }
     }

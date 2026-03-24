@@ -1202,39 +1202,41 @@ export function App() {
   return (
     <div className="session">
       <div className="chat-view">
-        <div className="chat-window-header">
-          <div className="chat-window-header-left">
-            <div className={`status-dot ${isConnected && hostStatus?.online ? "online" : "offline"}`} />
-            <span className="chat-window-title">
-              {selectedWindow ? selectedWindow.title : "RemoteOS"}
-            </span>
+        {selectedWindow && frameUrl ? null : (
+          <div className="chat-window-header">
+            <div className="chat-window-header-left">
+              <div className={`status-dot ${isConnected && hostStatus?.online ? "online" : "offline"}`} />
+              <span className="chat-window-title">
+                {selectedWindow ? selectedWindow.title : "RemoteOS"}
+              </span>
+            </div>
+            <button className="model-select-btn" onClick={() => setShowModelPicker(true)}>
+              <span>{getModelDisplayName(codexStatus?.model)}</span>
+              <ChevronDownIcon />
+            </button>
+            <div className="chat-window-header-actions">
+              <button
+                className="chat-header-btn"
+                onClick={() => void handleResetThread()}
+                aria-label="New chat"
+              >
+                <NewChatIcon />
+              </button>
+              <button className="chat-header-btn" onClick={openWindowsSheet}>
+                <WindowsIcon />
+              </button>
+              <button className="chat-header-btn" onClick={() => setShowAccount(true)} aria-label="Account">
+                {requiresControlPlaneSignIn && session.data?.user ? (
+                  <span className="account-btn-initial">
+                    {(session.data.user.name || session.data.user.email || "U")[0]!.toUpperCase()}
+                  </span>
+                ) : (
+                  <PersonIcon />
+                )}
+              </button>
+            </div>
           </div>
-          <button className="model-select-btn" onClick={() => setShowModelPicker(true)}>
-            <span>{getModelDisplayName(codexStatus?.model)}</span>
-            <ChevronDownIcon />
-          </button>
-          <div className="chat-window-header-actions">
-            <button
-              className="chat-header-btn"
-              onClick={() => void handleResetThread()}
-              aria-label="New chat"
-            >
-              <NewChatIcon />
-            </button>
-            <button className="chat-header-btn" onClick={openWindowsSheet}>
-              <WindowsIcon />
-            </button>
-            <button className="chat-header-btn" onClick={() => setShowAccount(true)} aria-label="Account">
-              {requiresControlPlaneSignIn && session.data?.user ? (
-                <span className="account-btn-initial">
-                  {(session.data.user.name || session.data.user.email || "U")[0]!.toUpperCase()}
-                </span>
-              ) : (
-                <PersonIcon />
-              )}
-            </button>
-          </div>
-        </div>
+        )}
 
         {selectedWindow && frameUrl ? (
           <div className="window-preview">

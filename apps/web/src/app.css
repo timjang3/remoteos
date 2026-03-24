@@ -465,9 +465,9 @@ input, textarea {
   flex-shrink: 0;
   height: 38vh;
   max-height: 340px;
+  padding-top: var(--safe-top);
   background: var(--bg);
   overflow: hidden;
-  border-bottom: 1px solid var(--border);
   position: relative;
 }
 
@@ -489,8 +489,8 @@ input, textarea {
 
 .window-preview-close {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: max(8px, calc(var(--safe-top) + 4px));
+  right: max(8px, var(--safe-right));
   width: 32px;
   height: 32px;
   border-radius: 50%;

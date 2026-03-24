@@ -17,6 +17,7 @@ public final class WindowInventoryService: @unchecked Sendable {
             return content.windows.compactMap { window in
                 guard
                     window.windowLayer == 0,
+                    window.isOnScreen,
                     window.frame.width > 100,
                     window.frame.height > 80,
                     let owner = window.owningApplication
@@ -24,9 +25,18 @@ public final class WindowInventoryService: @unchecked Sendable {
                     return nil
                 }
 
+                let runningApp = NSRunningApplication(processIdentifier: owner.processID)
+
+                // Only include windows from regular (user-facing) applications.
+                // Helper processes (autofill, spell-check, etc.) use .accessory
+                // or .prohibited and should not appear in the window list.
+                guard runningApp?.activationPolicy == .regular else {
+                    return nil
+                }
+
                 let title = window.title?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let ownerName = owner.applicationName
-                let bundleID = NSRunningApplication(processIdentifier: owner.processID)?.bundleIdentifier ?? owner.bundleIdentifier
+                let bundleID = runningApp?.bundleIdentifier ?? owner.bundleIdentifier
 
                 var capabilities: [WindowCapability] = [.pixelFallback]
                 if permissions.accessibility == .granted {

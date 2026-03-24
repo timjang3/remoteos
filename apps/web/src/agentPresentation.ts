@@ -251,14 +251,13 @@ export function getAgentItemPresentation(item: AgentItem): AgentItemPresentation
       };
     case "dynamic_tool": {
       const isComputerUse = item.title?.includes("computer_use");
-      const label = isComputerUse ? "Computer Use" : "Tool";
       const displayTitle = isComputerUse
         ? (item.status === "in_progress" ? "Using computer" : "Used computer")
         : `${item.status === "in_progress" ? "Calling" : "Called"} ${item.title}`;
       return {
         headline: displayTitle,
-        meta: label,
-        body: item.body?.trim() || null,
+        meta: isComputerUse ? null : "Tool",
+        body: isComputerUse ? null : (item.body?.trim() || null),
         bodyMode: "code" as AgentBodyMode,
         ...common
       };

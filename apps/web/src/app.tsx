@@ -13,31 +13,6 @@ import type {
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, useTransition, startTransition } from "react";
 
-function useElapsedSeconds(active: boolean) {
-  const [elapsed, setElapsed] = useState(0);
-  const startRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (!active) {
-      setElapsed(0);
-      startRef.current = null;
-      return;
-    }
-    startRef.current = Date.now();
-    const tick = () => {
-      if (startRef.current) setElapsed(Math.floor((Date.now() - startRef.current) / 1000));
-    };
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [active]);
-  return elapsed;
-}
-
-function formatElapsed(seconds: number) {
-  if (seconds < 60) return `${seconds}s`;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}m ${s.toString().padStart(2, "0")}s`;
-}
 
 import {
   BrokerClient,
@@ -54,7 +29,6 @@ import { createControlPlaneAuthClient } from "./authClient.js";
 import { BottomSheet } from "./components/BottomSheet.js";
 import {
   getAgentItemPresentation,
-  getBusyStatusPresentation,
   getCodexHeaderChips,
   isCommentaryAssistantItem,
   isFinalAssistantItem
@@ -332,8 +306,8 @@ function ActivityBlock({ item, traceEvents }: { item: AgentItem; traceEvents?: T
   const statusMeta = [presentation.meta, presentation.statusLabel].filter(Boolean).join(" · ");
 
   const isComputerUse = item.kind === "dynamic_tool" && item.title?.includes("computer_use");
-  const cuSteps = isComputerUse && item.status === "in_progress" && traceEvents
-    ? traceEvents.filter((e) => e.kind === "computer_use").slice(0, 6)
+  const latestCuStep = isComputerUse && item.status === "in_progress" && traceEvents
+    ? traceEvents.filter((e) => e.kind === "computer_use").at(-1) ?? null
     : null;
 
   return (
@@ -343,19 +317,14 @@ function ActivityBlock({ item, traceEvents }: { item: AgentItem; traceEvents?: T
           <ActivityStatusIcon item={item} />
         </div>
         <div className="activity-block-copy">
-          <div className="activity-block-headline">{presentation.headline}</div>
-          {statusMeta ? <div className="activity-block-meta">{statusMeta}</div> : null}
+          <div className="activity-block-headline">
+            {presentation.headline}
+            {latestCuStep ? <span className="cua-current-action"> — {latestCuStep.message}</span> : null}
+          </div>
+          {statusMeta && !isComputerUse ? <div className="activity-block-meta">{statusMeta}</div> : null}
         </div>
       </div>
-      {cuSteps && cuSteps.length > 0 ? (
-        <div className="activity-body activity-body-cua">
-          {cuSteps.map((step) => (
-            <div key={step.id} className="cua-step">{step.message}</div>
-          ))}
-        </div>
-      ) : (
-        <ActivityBody item={item} />
-      )}
+      {isComputerUse ? null : <ActivityBody item={item} />}
     </div>
   );
 }
@@ -378,33 +347,6 @@ function TracePanel({ events }: { events: TraceEvent[] }) {
         ))}
       </div>
     </details>
-  );
-}
-
-function BusyStatusBar({
-  items,
-  activeTurnId,
-  pending
-}: {
-  items: AgentItem[];
-  activeTurnId: string | null;
-  pending: boolean;
-}) {
-  const elapsed = useElapsedSeconds(true);
-  const busy = getBusyStatusPresentation(items, activeTurnId, pending);
-  return (
-    <div className="agent-status-bar">
-      <div className="agent-status-head">
-        <div className="agent-status-title">
-          <SpinnerIcon size={14} />
-          <span>{busy.header}</span>
-        </div>
-        <div className="agent-status-meta">
-          {formatElapsed(elapsed)} {pending ? "" : "• tap stop to interrupt"}
-        </div>
-      </div>
-      {busy.detail ? <div className="agent-status-detail">↳ {busy.detail}</div> : null}
-    </div>
   );
 }
 
@@ -1339,14 +1281,6 @@ export function App() {
               />
             ))}
           </div>
-        ) : null}
-
-        {isAgentBusy ? (
-          <BusyStatusBar
-            items={agentItems}
-            activeTurnId={activeAssistantTurnId}
-            pending={pendingAgentSend !== null}
-          />
         ) : null}
 
         <div className="chat-composer">

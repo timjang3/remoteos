@@ -62,6 +62,38 @@ function countLabel(count: number, singular: string, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+const remoteosTitleMap: Record<string, [string, string]> = {
+  remoteos_window_capture: ["Capturing window", "Captured window"],
+  remoteos_window_semantic_snapshot: ["Reading window", "Read window"],
+  remoteos_window_focus: ["Focusing window", "Focused window"],
+  remoteos_window_press_element: ["Pressing element", "Pressed element"],
+  remoteos_window_type_element: ["Typing into element", "Typed into element"],
+  remoteos_window_computer_use: ["Using computer", "Used computer"],
+  remoteos_window_click: ["Clicking", "Clicked"],
+  remoteos_window_drag: ["Dragging", "Dragged"],
+  remoteos_window_scroll: ["Scrolling", "Scrolled"],
+  remoteos_window_type_text: ["Typing text", "Typed text"],
+  remoteos_window_press_key: ["Pressing key", "Pressed key"]
+};
+
+function getRemoteosPresentation(title: string, status: AgentItemStatus, body: string | null | undefined) {
+  const entry = remoteosTitleMap[title];
+  const headline = entry
+    ? (status === "in_progress" ? entry[0] : entry[1])
+    : (status === "in_progress" ? "Working" : "Done");
+
+  // Extract only the first meaningful line — drop frame metadata and AI instructions
+  const firstLine = body?.split(/\r?\n/).find((l) => {
+    const t = l.trim();
+    return t && !t.startsWith("Window:") && !t.startsWith("frame_id:") &&
+      !t.startsWith("image_size:") && !t.startsWith("source_rect") &&
+      !t.startsWith("point_pixel") && !t.startsWith("Prefer ") &&
+      !t.startsWith("Use image") && !t.startsWith("Use accessibility");
+  })?.trim() ?? null;
+
+  return { headline, detail: firstLine };
+}
+
 function summarizeReasoning(item: AgentItem) {
   const text = item.body?.trim() || item.title;
   const [headline, ...rest] = text.split(/\n{2,}/).filter(Boolean);
@@ -250,7 +282,20 @@ export function getAgentItemPresentation(item: AgentItem): AgentItemPresentation
         ...common
       };
     case "dynamic_tool": {
+      const isRemoteos = item.title?.startsWith("remoteos_");
       const isComputerUse = item.title?.includes("computer_use");
+
+      if (isRemoteos) {
+        const rp = getRemoteosPresentation(item.title!, item.status, item.body);
+        return {
+          headline: rp.headline,
+          meta: rp.detail,
+          body: null,
+          bodyMode: "plain" as AgentBodyMode,
+          ...common
+        };
+      }
+
       const displayTitle = isComputerUse
         ? (item.status === "in_progress" ? "Using computer" : "Used computer")
         : `${item.status === "in_progress" ? "Calling" : "Called"} ${item.title}`;

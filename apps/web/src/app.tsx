@@ -306,6 +306,8 @@ function ActivityBlock({ item, traceEvents }: { item: AgentItem; traceEvents?: T
   const statusMeta = [presentation.meta, presentation.statusLabel].filter(Boolean).join(" · ");
 
   const isComputerUse = item.kind === "dynamic_tool" && item.title?.includes("computer_use");
+  const isRemoteos = item.kind === "dynamic_tool" && item.title?.startsWith("remoteos_");
+  const hideBody = isComputerUse || isRemoteos;
   const latestCuStep = isComputerUse && item.status === "in_progress" && traceEvents
     ? traceEvents.filter((e) => e.kind === "computer_use").at(-1) ?? null
     : null;
@@ -321,10 +323,10 @@ function ActivityBlock({ item, traceEvents }: { item: AgentItem; traceEvents?: T
             {presentation.headline}
             {latestCuStep ? <span className="cua-current-action"> — {latestCuStep.message}</span> : null}
           </div>
-          {statusMeta && !isComputerUse ? <div className="activity-block-meta">{statusMeta}</div> : null}
+          {statusMeta && (isRemoteos || !hideBody) ? <div className="activity-block-meta">{statusMeta}</div> : null}
         </div>
       </div>
-      {isComputerUse ? null : <ActivityBody item={item} />}
+      {hideBody ? null : <ActivityBody item={item} />}
     </div>
   );
 }
@@ -354,6 +356,7 @@ function ChatTranscript({
   transcript,
   agentTurn,
   selectedWindow,
+  showHomeState,
   streamingAssistantItemId,
   traceEvents,
   onOpenWindows,
@@ -362,14 +365,17 @@ function ChatTranscript({
   transcript: AgentItem[];
   agentTurn: AgentTurn | null;
   selectedWindow: WindowDescriptor | null;
+  showHomeState: boolean;
   streamingAssistantItemId: string | null;
   traceEvents: TraceEvent[];
   onOpenWindows: () => void;
   chatEndRef: React.RefObject<HTMLDivElement | null>;
 }) {
+  const shouldShowEmptyState = showHomeState || (transcript.length === 0 && !agentTurn);
+
   return (
     <div className="chat-messages">
-      {transcript.length === 0 && !agentTurn ? (
+      {shouldShowEmptyState ? (
         <div className="chat-empty-state">
           {!selectedWindow ? (
             <>
@@ -615,6 +621,7 @@ export function App() {
   const [showWindows, setShowWindows] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
+  const [showHomeState, setShowHomeState] = useState(false);
   const [tabVisible, setTabVisible] = useState(true);
   const [isAgentStartPending, startAgentStartTransition] = useTransition();
   const [activeBrokerConnectionId, setActiveBrokerConnectionId] = useState(0);
@@ -628,12 +635,18 @@ export function App() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const previousBrokerConnectionIdRef = useRef(0);
+  const showHomeStateRef = useRef(false);
 
   const selectedWindow = useMemo(
     () => windows.find((window) => window.id === selectedWindowId) ?? null,
     [selectedWindowId, windows]
   );
   const frameUrl = useThrottledFrameUrl(frame, !tabVisible);
+  const isShowingHomeState = showHomeState && selectedWindow === null;
+
+  useEffect(() => {
+    showHomeStateRef.current = showHomeState;
+  }, [showHomeState]);
 
   useEffect(() => {
     function handleVisibility() {
@@ -769,6 +782,8 @@ export function App() {
     setTraceEvents([]);
     setShowWindows(false);
     setShowModelPicker(false);
+    showHomeStateRef.current = false;
+    setShowHomeState(false);
     setActiveBrokerConnectionId(0);
     previousBrokerConnectionIdRef.current = 0;
     setConnectionState("idle");
@@ -799,6 +814,8 @@ export function App() {
         setHostStatus(payload.status);
         setCodexStatus(payload.status.codex);
         setSelectedWindowId(payload.status.selectedWindowId ?? null);
+        showHomeStateRef.current = false;
+        setShowHomeState(false);
         setConnectionState("connecting");
         const authMode = getResolvedControlPlaneAuthMode();
         const wsTicketResult =
@@ -861,7 +878,10 @@ export function App() {
           hostStatus(status) {
             setHostStatus(status);
             setCodexStatus(status.codex);
-            setSelectedWindowId(status.selectedWindowId ?? null);
+            const nextSelectedWindowId = status.selectedWindowId ?? null;
+            if (nextSelectedWindowId === null || !showHomeStateRef.current) {
+              setSelectedWindowId(nextSelectedWindowId);
+            }
           },
           codexStatus(status) {
             setCodexStatus(status);
@@ -999,6 +1019,8 @@ export function App() {
 
   async function handleSelectWindow(windowId: number) {
     if (!clientRef.current) return;
+    showHomeStateRef.current = false;
+    setShowHomeState(false);
     setSelectedWindowId(windowId);
     setFrame(undefined);
     setShowWindows(false);
@@ -1011,10 +1033,13 @@ export function App() {
     if (agentTurn?.status === "running") {
       void clientRef.current.cancelAgent(agentTurn.id);
     }
+    showHomeStateRef.current = true;
+    setShowHomeState(true);
     setSelectedWindowId(null);
     setFrame(undefined);
     setSemanticSnapshot(null);
     setSemanticDiff(null);
+    setChatError(null);
     try {
       await clientRef.current.stopStream(windowId);
     } catch {
@@ -1031,6 +1056,8 @@ export function App() {
       return;
     }
 
+    showHomeStateRef.current = false;
+    setShowHomeState(false);
     setChatError(null);
     const pendingSend: PendingAgentSend = {
       id: createPendingSendId(),
@@ -1266,13 +1293,14 @@ export function App() {
           transcript={transcript}
           agentTurn={agentTurn}
           selectedWindow={selectedWindow}
+          showHomeState={isShowingHomeState}
           streamingAssistantItemId={streamingAssistantItemId}
           traceEvents={traceEvents}
           onOpenWindows={openWindowsSheet}
           chatEndRef={chatEndRef}
         />
 
-        {agentPrompts.length > 0 ? (
+        {!isShowingHomeState && agentPrompts.length > 0 ? (
           <div className="agent-prompts">
             {agentPrompts.map((prompt) => (
               <PromptCard

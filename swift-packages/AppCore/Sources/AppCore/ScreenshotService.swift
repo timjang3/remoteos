@@ -14,7 +14,7 @@ public final class ScreenshotService: @unchecked Sendable {
         self.captureTimeout = captureTimeout
     }
 
-    public func capture(windowID: Int, topologyVersion: Int, reason: String = "capture", accessibilityBounds: CGRect? = nil) async throws -> CapturedFrame {
+    public func capture(windowID: Int, topologyVersion: Int, reason: String = "capture", accessibilityBounds: CGRect? = nil, maxPixelSize: Int? = nil, compressionQuality: Double? = nil) async throws -> CapturedFrame {
         let clock = ContinuousClock()
         let requestedAt = clock.now
         let shouldLogLifecycle = reason != "deck_snapshot"
@@ -47,9 +47,19 @@ public final class ScreenshotService: @unchecked Sendable {
                 do {
                     let filter = SCContentFilter(desktopIndependentWindow: window)
                     let info = SCShareableContent.info(for: filter)
+                    var configWidth = max(Int(bestRect.width * CGFloat(info.pointPixelScale)), 1)
+                    var configHeight = max(Int(bestRect.height * CGFloat(info.pointPixelScale)), 1)
+                    if let maxPixelSize {
+                        let maxDim = max(configWidth, configHeight)
+                        if maxDim > maxPixelSize {
+                            let downscale = Double(maxPixelSize) / Double(maxDim)
+                            configWidth = max(Int(Double(configWidth) * downscale), 1)
+                            configHeight = max(Int(Double(configHeight) * downscale), 1)
+                        }
+                    }
                     let configuration = Self.singleWindowConfiguration(
-                        width: max(Int(bestRect.width * CGFloat(info.pointPixelScale)), 1),
-                        height: max(Int(bestRect.height * CGFloat(info.pointPixelScale)), 1)
+                        width: configWidth,
+                        height: configHeight
                     )
 
                     let captured = try await self.withTimeout(
@@ -73,14 +83,15 @@ public final class ScreenshotService: @unchecked Sendable {
                         windowID: Int(window.windowID),
                         topologyVersion: topologyVersion,
                         windowRect: fallbackRect,
-                        displays: content.displays
+                        displays: content.displays,
+                        maxPixelSize: maxPixelSize
                     )
                     image = result.image
                     sourceRect = result.sourceRect
                     scale = result.scale
                 }
 
-                let encoded = try self.encode(image: image)
+                let encoded = try self.encode(image: image, compressionQuality: compressionQuality ?? 0.78)
                 let displayID = self.bestDisplayID(for: bestRect, displays: content.displays)
                 self.log.notice(
                     "Capture geometry windowId=\(windowID) sourceRect=\(Self.logRect(sourceRect)) windowBounds=\(Self.logRect(bestRect)) scWindowFrame=\(Self.logRect(window.frame)) imageSize=\(image.width)x\(image.height) scale=\(String(format: "%.3f", scale))"
@@ -124,7 +135,8 @@ public final class ScreenshotService: @unchecked Sendable {
         windowID: Int,
         topologyVersion: Int,
         windowRect: CGRect,
-        displays: [SCDisplay]
+        displays: [SCDisplay],
+        maxPixelSize: Int? = nil
     ) async throws -> (image: CGImage, sourceRect: CGRect, scale: Double) {
         guard let display = displays.max(by: {
             windowRect.intersection($0.frame).area
@@ -150,8 +162,18 @@ public final class ScreenshotService: @unchecked Sendable {
         let configuration = SCStreamConfiguration()
         configuration.pixelFormat = kCVPixelFormatType_32BGRA
         configuration.sourceRect = regionInDisplay
-        configuration.width = max(Int(windowRect.width * scale), 1)
-        configuration.height = max(Int(windowRect.height * scale), 1)
+        var regionWidth = max(Int(windowRect.width * scale), 1)
+        var regionHeight = max(Int(windowRect.height * scale), 1)
+        if let maxPixelSize {
+            let maxDim = max(regionWidth, regionHeight)
+            if maxDim > maxPixelSize {
+                let downscale = Double(maxPixelSize) / Double(maxDim)
+                regionWidth = max(Int(Double(regionWidth) * downscale), 1)
+                regionHeight = max(Int(Double(regionHeight) * downscale), 1)
+            }
+        }
+        configuration.width = regionWidth
+        configuration.height = regionHeight
         configuration.showsCursor = true
         configuration.capturesAudio = false
 
@@ -180,12 +202,12 @@ public final class ScreenshotService: @unchecked Sendable {
         }
     }
 
-    private func encode(image: CGImage) throws -> (dataBase64: String, width: Int, height: Int) {
+    private func encode(image: CGImage, compressionQuality: Double = 0.78) throws -> (dataBase64: String, width: Int, height: Int) {
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else {
             throw AppCoreError.invalidResponse
         }
-        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.78] as CFDictionary)
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: compressionQuality] as CFDictionary)
         guard CGImageDestinationFinalize(destination) else {
             throw AppCoreError.invalidResponse
         }

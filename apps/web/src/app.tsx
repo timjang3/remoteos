@@ -1423,8 +1423,10 @@ export function App() {
                   <div className="window-item-thumb" />
                 )}
                 <div className="window-item-info">
-                  <span className="window-item-title">{window.title}</span>
-                  <span className="window-item-app">{window.ownerName}</span>
+                  <span className="window-item-title">{window.ownerName}</span>
+                  {window.title !== window.ownerName ? (
+                    <span className="window-item-app">{window.title}</span>
+                  ) : null}
                 </div>
                 {selectedWindowId === window.id ? (
                   <div className="window-item-badge">

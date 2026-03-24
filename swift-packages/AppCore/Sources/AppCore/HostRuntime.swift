@@ -867,12 +867,14 @@ public final class HostRuntime: ObservableObject {
     }
 
     private func publishDeckSnapshots() async {
-        for window in windows.prefix(6) {
+        for window in windows {
             do {
                 let snapshot = try await screenshotService.capture(
                     windowID: window.id,
                     topologyVersion: displayTopologyVersion,
-                    reason: "deck_snapshot"
+                    reason: "deck_snapshot",
+                    maxPixelSize: 320,
+                    compressionQuality: 0.5
                 )
                 clearDeckSnapshotFailure(forWindowID: window.id)
                 let payload = WindowSnapshotPayload(

@@ -2,12 +2,12 @@ import ScreenCaptureKit
 import Testing
 @testable import AppCore
 
-@Test func singleWindowScreenshotConfigurationIncludesChildWindows() {
+@Test func singleWindowScreenshotConfigurationIgnoresShadows() {
     let configuration = ScreenshotService.singleWindowConfiguration(width: 1440, height: 900)
     #expect(configuration.width == 1440)
     #expect(configuration.height == 900)
-    if #available(macOS 14.2, *) {
-        #expect(configuration.includeChildWindows == true)
+    if #available(macOS 14.0, *) {
+        #expect(configuration.ignoreShadowsSingleWindow == true)
     }
 }
 
@@ -67,4 +67,15 @@ import Testing
     )
 
     #expect(contentRectPixels == CGRect(x: 24, y: 36, width: 800, height: 600))
+}
+
+@Test func screenshotContentRectPixelsMapsPointSpaceWindowBoundsIntoImagePixels() {
+    let contentRectPixels = ScreenshotService.contentRectPixels(
+        contentRectPoints: CGRect(x: 136, y: 264, width: 884, height: 676),
+        sourceRectPoints: CGRect(x: 120, y: 240, width: 900, height: 700),
+        imageWidth: 1800,
+        imageHeight: 1400
+    )
+
+    #expect(contentRectPixels == CGRect(x: 32, y: 48, width: 1768, height: 1352))
 }

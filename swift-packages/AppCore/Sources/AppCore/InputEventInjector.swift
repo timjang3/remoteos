@@ -8,6 +8,8 @@ public enum InputMouseButton: String, Sendable {
 }
 
 public final class InputEventInjector: @unchecked Sendable {
+    private let log = AppLogs.input
+
     public init() {}
 
     public func tap(frame: CapturedFrame, normalizedX: Double, normalizedY: Double, clickCount: Int) {
@@ -44,7 +46,7 @@ public final class InputEventInjector: @unchecked Sendable {
 
     public func move(frame: CapturedFrame, x: Double, y: Double) throws {
         let point = try globalPoint(frame: frame, x: x, y: y)
-        moveCursor(to: point)
+        _ = try moveCursor(to: point)
     }
 
     public func click(
@@ -55,7 +57,7 @@ public final class InputEventInjector: @unchecked Sendable {
         clickCount: Int = 1
     ) throws {
         let point = try globalPoint(frame: frame, x: x, y: y)
-        click(globalPoint: point, button: button, clickCount: clickCount)
+        try click(globalPoint: point, button: button, clickCount: clickCount)
     }
 
     public func click(
@@ -72,7 +74,7 @@ public final class InputEventInjector: @unchecked Sendable {
         guard let point = try? globalPoint(frame: frame, x: imageX, y: imageY) else {
             return
         }
-        click(globalPoint: point, button: button, clickCount: clickCount)
+        try? click(globalPoint: point, button: button, clickCount: clickCount)
     }
 
     public func drag(
@@ -154,9 +156,8 @@ public final class InputEventInjector: @unchecked Sendable {
     }
 
     public func normalizedPoint(frame: CapturedFrame, x: Double, y: Double) -> (Double, Double) {
-        let contentRect = contentRectPixels(for: frame)
-        let normalizedX = (x - contentRect.x) / contentRect.width
-        let normalizedY = (y - contentRect.y) / contentRect.height
+        let normalizedX = x / Double(frame.width)
+        let normalizedY = y / Double(frame.height)
         return (normalizedX, normalizedY)
     }
 
@@ -172,60 +173,57 @@ public final class InputEventInjector: @unchecked Sendable {
                 "Coordinates (\(Int(x.rounded())), \(Int(y.rounded()))) are outside the visible captured content."
             )
         }
-        return point(for: frame, normalizedX: normalized.0, normalizedY: normalized.1)
+        let point = point(for: frame, normalizedX: normalized.0, normalizedY: normalized.1)
+        let normalizedLabel = String(format: "%.4f,%.4f", normalized.0, normalized.1)
+        log.notice(
+            "Coordinate transform frameId=\(frame.frameId) imagePoint=\(CGPoint(x: x, y: y).logDescription) normalized=\(normalizedLabel) imageSize=\(frame.width)x\(frame.height) targetRectPoints=\(frame.windowBoundsPoints.logDescription) globalPoint=\(point.logDescription)"
+        )
+        return point
     }
 
     private func point(for frame: CapturedFrame, normalizedX: Double, normalizedY: Double) -> CGPoint {
-        CGPoint(
-            x: frame.sourceRectPoints.x + (frame.sourceRectPoints.width * normalizedX),
-            y: frame.sourceRectPoints.y + (frame.sourceRectPoints.height * normalizedY)
+        return CGPoint(
+            x: frame.windowBoundsPoints.x + (frame.windowBoundsPoints.width * normalizedX),
+            y: frame.windowBoundsPoints.y + (frame.windowBoundsPoints.height * normalizedY)
         )
     }
 
     private func centerPoint(for frame: CapturedFrame) -> CGPoint {
-        let contentRect = contentRectPixels(for: frame)
-        let imagePoint = CGPoint(
-            x: contentRect.x + (contentRect.width / 2),
-            y: contentRect.y + (contentRect.height / 2)
-        )
-        return (try? globalPoint(frame: frame, x: imagePoint.x, y: imagePoint.y))
-            ?? point(for: frame, normalizedX: 0.5, normalizedY: 0.5)
+        point(for: frame, normalizedX: 0.5, normalizedY: 0.5)
     }
 
-    private func contentRectPixels(for frame: CapturedFrame) -> WindowBounds {
-        let fullImageBounds = WindowBounds(
-            x: 0,
-            y: 0,
-            width: Double(frame.width),
-            height: Double(frame.height)
-        )
-        guard
-            let contentRect = frame.contentRectPixels,
-            contentRect.width > 0,
-            contentRect.height > 0
-        else {
-            return fullImageBounds
+    private func moveCursor(to point: CGPoint) throws -> CGPoint {
+        let warpError = CGWarpMouseCursorPosition(point)
+        let associateError = CGAssociateMouseAndMouseCursorPosition(1)
+        guard warpError == .success, associateError == .success else {
+            log.error(
+                "Cursor move failed requestedPoint=\(point.logDescription) warpError=\(warpError.rawValue) associateError=\(associateError.rawValue)"
+            )
+            throw AppCoreError.invalidPayload("Failed to move the cursor to the requested point.")
         }
-        return contentRect
-    }
-
-    private func moveCursor(to point: CGPoint) {
-        // Use CGWarpMouseCursorPosition for reliable absolute positioning
-        // across displays (especially external monitors at negative coords).
-        CGWarpMouseCursorPosition(point)
-        // Re-associate the physical mouse with the new cursor position so
-        // subsequent physical movements start from the warped location.
-        CGAssociateMouseAndMouseCursorPosition(1)
         // Also post a mouseMoved event so applications receive the
         // notification and update hover/tracking state.
         guard let event = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left) else {
-            return
+            throw AppCoreError.invalidPayload("Failed to create a mouse move event.")
         }
         event.post(tap: .cghidEventTap)
+        let actualPoint = CGEvent(source: nil)?.location ?? point
+        let deltaX = abs(actualPoint.x - point.x)
+        let deltaY = abs(actualPoint.y - point.y)
+        guard deltaX <= 4, deltaY <= 4 else {
+            log.error(
+                "Cursor move mismatch requestedPoint=\(point.logDescription) actualPoint=\(actualPoint.logDescription) warpError=\(warpError.rawValue)"
+            )
+            throw AppCoreError.invalidPayload("The cursor did not reach the requested point.")
+        }
+        log.notice(
+            "Cursor move requestedPoint=\(point.logDescription) actualPoint=\(actualPoint.logDescription)"
+        )
+        return actualPoint
     }
 
-    private func click(globalPoint: CGPoint, button: InputMouseButton, clickCount: Int) {
-        moveCursor(to: globalPoint)
+    private func click(globalPoint: CGPoint, button: InputMouseButton, clickCount: Int) throws {
+        _ = try moveCursor(to: globalPoint)
         let mouseButton = Self.cgMouseButton(for: button)
         for type in Self.clickEventTypes(for: button) {
             guard let event = CGEvent(
@@ -239,6 +237,9 @@ public final class InputEventInjector: @unchecked Sendable {
             event.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
             event.post(tap: .cghidEventTap)
         }
+        log.notice(
+            "Mouse click globalPoint=\(globalPoint.logDescription) button=\(button.rawValue) clickCount=\(clickCount)"
+        )
     }
 
     private func drag(globalPath: [CGPoint], button: InputMouseButton) {
@@ -247,7 +248,7 @@ public final class InputEventInjector: @unchecked Sendable {
         }
 
         let mouseButton = Self.cgMouseButton(for: button)
-        moveCursor(to: first)
+        _ = try? moveCursor(to: first)
         guard let downEvent = CGEvent(
             mouseEventSource: nil,
             mouseType: Self.mouseDownType(for: button),
@@ -284,7 +285,7 @@ public final class InputEventInjector: @unchecked Sendable {
     }
 
     private func scroll(point: CGPoint, deltaX: Double, deltaY: Double) {
-        moveCursor(to: point)
+        _ = try? moveCursor(to: point)
         guard let scrollEvent = CGEvent(
             scrollWheelEvent2Source: nil,
             units: .pixel,

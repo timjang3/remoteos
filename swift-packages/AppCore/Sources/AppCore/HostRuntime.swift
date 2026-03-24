@@ -38,6 +38,7 @@ public final class HostRuntime: ObservableObject {
     private let screenshotService: ScreenshotService
     private let windowStreamService: WindowStreamService
     private let accessibilityService: AccessibilityService
+    private let textRecognitionService: TextRecognitionService
     private let inputInjector: InputEventInjector
     private let auditStore: AuditStore
     private let brokerClient: BrokerClient
@@ -77,6 +78,7 @@ public final class HostRuntime: ObservableObject {
         screenshotService: ScreenshotService = ScreenshotService(),
         windowStreamService: WindowStreamService = WindowStreamService(),
         accessibilityService: AccessibilityService = AccessibilityService(),
+        textRecognitionService: TextRecognitionService = TextRecognitionService(),
         inputInjector: InputEventInjector = InputEventInjector(),
         brokerClient: BrokerClient = BrokerClient(),
         urlSession: URLSession = .shared
@@ -91,6 +93,7 @@ public final class HostRuntime: ObservableObject {
         self.screenshotService = screenshotService
         self.windowStreamService = windowStreamService
         self.accessibilityService = accessibilityService
+        self.textRecognitionService = textRecognitionService
         self.inputInjector = inputInjector
         self.brokerClient = brokerClient
         self.urlSession = urlSession
@@ -1302,6 +1305,19 @@ public final class HostRuntime: ObservableObject {
         }
     }
 
+    private func pressVisibleText(label: String, in window: WindowDescriptor) async throws {
+        let frame = try await captureAndStoreFrame(
+            windowID: window.id,
+            reason: "tool:remoteos_window_press_element_lookup"
+        )
+        guard let match = try textRecognitionService.bestMatch(in: frame, query: label) else {
+            throw AppCoreError.invalidPayload("Could not find a matching visible element named \(label).")
+        }
+        textRecognitionService.logMatch(frame: frame, query: label, match: match)
+        let center = match.centerPointPixels
+        try inputInjector.click(frame: frame, x: center.x, y: center.y, clickCount: 1)
+    }
+
     private func executeDynamicTool(
         invocation: DynamicToolInvocation,
         named tool: String,
@@ -1405,12 +1421,16 @@ public final class HostRuntime: ObservableObject {
                 throw AppCoreError.invalidPayload("label is required.")
             }
             let focusedWindow = try await focusWindow(for: selectedWindow.id)
-            guard accessibilityService.press(label: label, in: focusedWindow) else {
-                throw AppCoreError.invalidPayload("Could not find a matching accessibility element named \(label).")
+            do {
+                try await pressVisibleText(label: label, in: focusedWindow)
+            } catch {
+                guard accessibilityService.press(label: label, in: focusedWindow) else {
+                    throw error
+                }
             }
             await refreshWindowsAfterAction(for: focusedWindow)
             return try await captureSelectedWindowResult(
-                prefix: "Pressed accessibility element \(label).",
+                prefix: "Activated labeled control \(label).",
                 reason: "tool:remoteos_window_press_element"
             )
         case "remoteos_window_type_element":
@@ -1517,6 +1537,7 @@ public final class HostRuntime: ObservableObject {
         image_size: \(frame.width)x\(frame.height)
         source_rect_points: x=\(Int(frame.sourceRectPoints.x)) y=\(Int(frame.sourceRectPoints.y)) width=\(Int(frame.sourceRectPoints.width)) height=\(Int(frame.sourceRectPoints.height))
         point_pixel_scale: \(frame.pointPixelScale)
+        Prefer `remoteos_window_press_element` for visible labeled controls instead of guessing pixel coordinates.
         Use image pixel coordinates from the attached image when calling pixel tools.
         """
         return DynamicToolResult(
@@ -1980,6 +2001,7 @@ public final class HostRuntime: ObservableObject {
         Only use RemoteOS dynamic tools for native macOS window interaction.
         If the user explicitly asks to use the computer-use tool, use `remoteos_window_computer_use` instead of substituting accessibility or pixel tools unless that tool is blocked by permissions or scope.
         Otherwise, prefer accessibility tools before pixel tools or computer use.
+        If the user names a visible tab, button, row, or label inside the selected window, prefer `remoteos_window_press_element` before guessing image coordinates. That tool can activate accessibility elements and OCR-detected visible text.
         After selecting a window for native interaction, keep it focused before continuing with visual actions.
         If the user asks you to click, type, press, drag, or scroll in a selected window, continue until you either attempt that action or hit a concrete blocker. Do not stop after only taking a snapshot or capture.
         Use `remoteos_window_computer_use` only when accessibility tools or direct pixel tools are insufficient for visual interaction inside the selected window.
@@ -1997,10 +2019,10 @@ public final class HostRuntime: ObservableObject {
             dynamicTool(name: "remoteos_window_capture", description: "Capture the currently selected macOS window and return an image plus frame metadata.", schema: emptySchema()),
             dynamicTool(name: "remoteos_window_semantic_snapshot", description: "Return an accessibility snapshot for the currently selected macOS window.", schema: emptySchema()),
             dynamicTool(name: "remoteos_window_focus", description: "Bring the selected macOS window to the front and return a fresh capture.", schema: emptySchema()),
-            dynamicTool(name: "remoteos_window_press_element", description: "Press an accessibility element in the selected window by label.", schema: requiredObject(properties: ["label": ["type": "string"]], required: ["label"])),
+            dynamicTool(name: "remoteos_window_press_element", description: "Activate a visible labeled control in the selected window by label. Uses accessibility when available and OCR-backed text matching for rendered UI.", schema: requiredObject(properties: ["label": ["type": "string"]], required: ["label"])),
             dynamicTool(name: "remoteos_window_type_element", description: "Type into an accessibility element in the selected window by label.", schema: requiredObject(properties: ["label": ["type": "string"], "text": ["type": "string"]], required: ["label", "text"])),
             dynamicTool(name: "remoteos_window_computer_use", description: "Use GPT-5.4 computer use on the selected window only. Provide a goal; RemoteOS will capture the selected window, execute returned actions locally, and return the final screenshot.", schema: requiredObject(properties: ["goal": ["type": "string"]], required: ["goal"])),
-            dynamicTool(name: "remoteos_window_click", description: "Click inside the selected window using image pixel coordinates from the latest capture.", schema: requiredObject(properties: ["frameId": ["type": "string"], "x": ["type": "number"], "y": ["type": "number"], "clickCount": ["type": "integer"]], required: ["frameId", "x", "y"])),
+            dynamicTool(name: "remoteos_window_click", description: "Click an arbitrary point inside the selected window using image pixel coordinates from the latest capture. Prefer `remoteos_window_press_element` for visible labeled controls instead of guessing coordinates.", schema: requiredObject(properties: ["frameId": ["type": "string"], "x": ["type": "number"], "y": ["type": "number"], "clickCount": ["type": "integer"]], required: ["frameId", "x", "y"])),
             dynamicTool(name: "remoteos_window_drag", description: "Drag inside the selected window using image pixel coordinates from the latest capture.", schema: requiredObject(properties: ["frameId": ["type": "string"], "fromX": ["type": "number"], "fromY": ["type": "number"], "toX": ["type": "number"], "toY": ["type": "number"]], required: ["frameId", "fromX", "fromY", "toX", "toY"])),
             dynamicTool(name: "remoteos_window_scroll", description: "Scroll inside the selected window using the latest capture context.", schema: requiredObject(properties: ["frameId": ["type": "string"], "deltaX": ["type": "number"], "deltaY": ["type": "number"]], required: ["frameId", "deltaX", "deltaY"])),
             dynamicTool(name: "remoteos_window_type_text", description: "Type text into the selected window using the latest capture context.", schema: requiredObject(properties: ["frameId": ["type": "string"], "text": ["type": "string"]], required: ["frameId", "text"])),

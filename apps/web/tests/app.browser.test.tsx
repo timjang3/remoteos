@@ -24,8 +24,49 @@ const actEnvironment = globalThis as typeof globalThis & {
 };
 
 type Listener = (event?: unknown) => void;
+type SelectedWindowId = number | null;
 
 const sockets: FakeWebSocket[] = [];
+
+function createWindow() {
+  return {
+    id: 1,
+    ownerPid: 42,
+    ownerName: "Safari",
+    appBundleId: "com.apple.Safari",
+    title: "Remote Window",
+    bounds: {
+      x: 0,
+      y: 0,
+      width: 1440,
+      height: 900
+    },
+    isOnScreen: true,
+    capabilities: ["pixel_fallback"],
+    semanticSummary: null
+  };
+}
+
+function createHostStatus(selectedWindowId: SelectedWindowId) {
+  return {
+    deviceId: "device_1",
+    online: true,
+    selectedWindowId,
+    screenRecording: "granted",
+    accessibility: "granted",
+    directUrl: null,
+    codex: {
+      state: "ready",
+      installed: true,
+      authenticated: true,
+      authMode: "chatgpt",
+      model: "gpt-5.4",
+      threadId: null,
+      activeTurnId: null,
+      lastError: null
+    }
+  };
+}
 
 class FakeWebSocket {
   static readonly CONNECTING = 0;
@@ -58,27 +99,13 @@ class FakeWebSocket {
     switch (message.method) {
       case "windows.list":
         this.respond(message.id, {
-          windows: [
-            {
-              id: 1,
-              ownerPid: 42,
-              ownerName: "Safari",
-              appBundleId: "com.apple.Safari",
-              title: "Remote Window",
-              bounds: {
-                x: 0,
-                y: 0,
-                width: 1440,
-                height: 900
-              },
-              isOnScreen: true,
-              capabilities: ["pixel_fallback"],
-              semanticSummary: null
-            }
-          ]
+          windows: [createWindow()]
         });
         return;
       case "stream.start":
+        this.respond(message.id, { ok: true });
+        return;
+      case "stream.stop":
         this.respond(message.id, { ok: true });
         return;
       case "semantic.snapshot":
@@ -93,6 +120,18 @@ class FakeWebSocket {
       default:
         return;
     }
+  }
+
+  notify(method: string, params: unknown) {
+    queueMicrotask(() => {
+      this.emit("message", {
+        data: JSON.stringify({
+          jsonrpc: "2.0",
+          method,
+          params
+        })
+      });
+    });
   }
 
   close() {
@@ -159,42 +198,8 @@ describe("App browser stream lifecycle", () => {
             online: true,
             mode: "hosted"
           },
-          windows: [
-            {
-              id: 1,
-              ownerPid: 42,
-              ownerName: "Safari",
-              appBundleId: "com.apple.Safari",
-              title: "Remote Window",
-              bounds: {
-                x: 0,
-                y: 0,
-                width: 1440,
-                height: 900
-              },
-              isOnScreen: true,
-              capabilities: ["pixel_fallback"],
-              semanticSummary: null
-            }
-          ],
-          status: {
-            deviceId: "device_1",
-            online: true,
-            selectedWindowId: 1,
-            screenRecording: "granted",
-            accessibility: "granted",
-            directUrl: null,
-            codex: {
-              state: "ready",
-              installed: true,
-              authenticated: true,
-              authMode: "chatgpt",
-              model: "gpt-5.4",
-              threadId: null,
-              activeTurnId: null,
-              lastError: null
-            }
-          },
+          windows: [createWindow()],
+          status: createHostStatus(1),
           wsUrl: "ws://localhost:8787/ws/client?clientToken=token_1"
         }),
         {
@@ -246,6 +251,63 @@ describe("App browser stream lifecycle", () => {
     expect(methods).toContain("windows.list");
     expect(methods).toContain("stream.start");
     expect(methods).toContain("semantic.snapshot");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("keeps the mobile UI on the home state after manually closing a stream", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flushAsync();
+
+    sockets[0]!.notify("agent.item", {
+      id: "assistant_1",
+      turnId: "turn_1",
+      kind: "assistant_message",
+      status: "completed",
+      title: "Codex",
+      body: "Existing reply",
+      createdAt: NOW,
+      updatedAt: NOW,
+      metadata: { phase: "final_answer" }
+    });
+    await flushAsync();
+
+    expect(container.textContent).toContain("Existing reply");
+    expect(container.querySelector(".window-preview")).not.toBeNull();
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Stop streaming"]')
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushAsync();
+
+    expect(
+      sockets[0]!.sent.map((payload) => JSON.parse(payload).method)
+    ).toContain("stream.stop");
+    expect(container.querySelector(".window-preview")).toBeNull();
+    expect(container.textContent).toContain("Welcome to RemoteOS");
+    expect(container.textContent).not.toContain("Existing reply");
+
+    sockets[0]!.notify("host.status", createHostStatus(1));
+    await flushAsync();
+
+    expect(container.querySelector(".window-preview")).toBeNull();
+    expect(container.textContent).toContain("Welcome to RemoteOS");
+    expect(container.textContent).not.toContain("Existing reply");
+    expect(
+      sockets[0]!.sent
+        .map((payload) => JSON.parse(payload).method)
+        .filter((method) => method === "stream.start")
+    ).toHaveLength(1);
 
     await act(async () => {
       root.unmount();

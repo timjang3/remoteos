@@ -1,5 +1,4 @@
 import AppKit
-import CoreImage
 import CoreMedia
 import Foundation
 import ImageIO
@@ -9,7 +8,6 @@ import UniformTypeIdentifiers
 public final class ScreenshotService: @unchecked Sendable {
     private let gate = CaptureGate()
     private let captureTimeout: Duration
-    private let imageContext = CIContext()
     private let log = AppLogs.screenshot
 
     public init(captureTimeout: Duration = .seconds(8)) {
@@ -40,35 +38,29 @@ public final class ScreenshotService: @unchecked Sendable {
                 guard let window = content.windows.first(where: { Int($0.windowID) == windowID }) else {
                     throw AppCoreError.missingWindow
                 }
+                let bestRect = accessibilityBounds ?? window.frame
 
                 // Try per-window capture first; fall back to display-region
                 // capture if ScreenCaptureKit rejects the window (e.g.
                 // after permission changes or for certain app types).
-                let capturedFrame: CapturedFrame
+                let (image, sourceRect, scale): (CGImage, CGRect, Double)
                 do {
                     let filter = SCContentFilter(desktopIndependentWindow: window)
                     let info = SCShareableContent.info(for: filter)
                     let configuration = Self.singleWindowConfiguration(
-                        width: max(Int(info.contentRect.width * CGFloat(info.pointPixelScale)), 1),
-                        height: max(Int(info.contentRect.height * CGFloat(info.pointPixelScale)), 1)
+                        width: max(Int(bestRect.width * CGFloat(info.pointPixelScale)), 1),
+                        height: max(Int(bestRect.height * CGFloat(info.pointPixelScale)), 1)
                     )
 
                     let captured = try await self.withTimeout(
                         duration: self.captureTimeout,
                         errorMessage: "Timed out capturing window \(windowID)."
                     ) {
-                        try await self.captureFrame(
-                            windowID: Int(window.windowID),
-                            topologyVersion: topologyVersion,
-                            filter: filter,
-                            configuration: configuration,
-                            windowBounds: (accessibilityBounds ?? window.frame),
-                            fallbackSourceRect: info.contentRect,
-                            fallbackScale: Double(info.pointPixelScale),
-                            displays: content.displays
-                        )
+                        try await self.captureImage(filter: filter, configuration: configuration)
                     }
-                    capturedFrame = captured
+                    image = captured
+                    sourceRect = bestRect
+                    scale = Double(info.pointPixelScale)
                 } catch {
                     if shouldLogLifecycle {
                         self.log.warning("Per-window capture failed for \(windowID), trying display-region fallback: \(error.localizedDescription)")
@@ -83,10 +75,31 @@ public final class ScreenshotService: @unchecked Sendable {
                         windowRect: fallbackRect,
                         displays: content.displays
                     )
-                    capturedFrame = result
+                    image = result.image
+                    sourceRect = result.sourceRect
+                    scale = result.scale
                 }
 
-                return capturedFrame
+                let encoded = try self.encode(image: image)
+                let displayID = self.bestDisplayID(for: bestRect, displays: content.displays)
+                self.log.notice(
+                    "Capture geometry windowId=\(windowID) sourceRect=\(Self.logRect(sourceRect)) windowBounds=\(Self.logRect(bestRect)) scWindowFrame=\(Self.logRect(window.frame)) imageSize=\(image.width)x\(image.height) scale=\(String(format: "%.3f", scale))"
+                )
+
+                return CapturedFrame(
+                    windowId: Int(window.windowID),
+                    frameId: UUID().uuidString,
+                    capturedAt: isoNow(),
+                    mimeType: "image/jpeg",
+                    dataBase64: encoded.dataBase64,
+                    width: image.width,
+                    height: image.height,
+                    displayID: displayID,
+                    sourceRectPoints: sourceRect.asWindowBounds,
+                    pointPixelScale: scale,
+                    windowBoundsPoints: bestRect.asWindowBounds,
+                    topologyVersion: topologyVersion
+                )
             }
 
             if shouldLogLifecycle {
@@ -112,7 +125,7 @@ public final class ScreenshotService: @unchecked Sendable {
         topologyVersion: Int,
         windowRect: CGRect,
         displays: [SCDisplay]
-    ) async throws -> CapturedFrame {
+    ) async throws -> (image: CGImage, sourceRect: CGRect, scale: Double) {
         guard let display = displays.max(by: {
             windowRect.intersection($0.frame).area
                 < windowRect.intersection($1.frame).area
@@ -142,89 +155,29 @@ public final class ScreenshotService: @unchecked Sendable {
         configuration.showsCursor = true
         configuration.capturesAudio = false
 
-        return try await withTimeout(
+        let image = try await withTimeout(
             duration: captureTimeout,
             errorMessage: "Timed out capturing display region for window."
         ) {
-            try await self.captureFrame(
-                windowID: windowID,
-                topologyVersion: topologyVersion,
-                filter: filter,
-                configuration: configuration,
-                windowBounds: windowRect,
-                fallbackSourceRect: windowRect,
-                fallbackScale: scale,
-                displays: displays
-            )
+            try await self.captureImage(filter: filter, configuration: configuration)
         }
+        return (image: image, sourceRect: windowRect, scale: scale)
     }
 
-    private func captureFrame(
-        windowID: Int,
-        topologyVersion: Int,
-        filter: SCContentFilter,
-        configuration: SCStreamConfiguration,
-        windowBounds: CGRect,
-        fallbackSourceRect: CGRect,
-        fallbackScale: Double,
-        displays: [SCDisplay]
-    ) async throws -> CapturedFrame {
-        let sampleBuffer = try await captureSampleBuffer(filter: filter, configuration: configuration)
-        guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-            throw AppCoreError.invalidResponse
-        }
-
-        let ciImage = CIImage(cvPixelBuffer: imageBuffer)
-        guard let cgImage = imageContext.createCGImage(ciImage, from: ciImage.extent) else {
-            throw AppCoreError.invalidResponse
-        }
-
-        let geometry = Self.frameGeometry(
-            attachments: Self.frameAttachments(from: sampleBuffer),
-            fallbackSourceRect: fallbackSourceRect,
-            fallbackScale: fallbackScale
-        )
-        let encoded = try encode(image: cgImage)
-        let displayID = bestDisplayID(for: geometry.screenRect, displays: displays)
-        let contentRectPixels = Self.contentRectPixels(
-            contentRectInSurface: geometry.contentRectInSurface,
-            scaleFactor: geometry.scaleFactor,
-            imageWidth: cgImage.width,
-            imageHeight: cgImage.height
-        )
-
-        return CapturedFrame(
-            windowId: windowID,
-            frameId: UUID().uuidString,
-            capturedAt: isoNow(),
-            mimeType: "image/jpeg",
-            dataBase64: encoded.dataBase64,
-            width: cgImage.width,
-            height: cgImage.height,
-            displayID: displayID,
-            sourceRectPoints: geometry.screenRect.asWindowBounds,
-            contentRectPixels: contentRectPixels?.asWindowBounds,
-            pointPixelScale: geometry.scaleFactor,
-            windowBoundsPoints: windowBounds.asWindowBounds,
-            topologyVersion: topologyVersion
-        )
-    }
-
-    private func captureSampleBuffer(filter: SCContentFilter, configuration: SCStreamConfiguration) async throws -> CMSampleBuffer {
-        let box: UncheckedSendableBox<CMSampleBuffer> = try await withCheckedThrowingContinuation { continuation in
-            SCScreenshotManager.captureSampleBuffer(contentFilter: filter, configuration: configuration) { sampleBuffer, error in
+    private func captureImage(filter: SCContentFilter, configuration: SCStreamConfiguration) async throws -> CGImage {
+        try await withCheckedThrowingContinuation { continuation in
+            SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration) { image, error in
                 if let error {
                     continuation.resume(throwing: error)
                     return
                 }
-                if let sampleBuffer {
-                    continuation.resume(returning: UncheckedSendableBox(value: sampleBuffer))
+                if let image {
+                    continuation.resume(returning: image)
                 } else {
                     continuation.resume(throwing: AppCoreError.invalidResponse)
                 }
             }
         }
-        return box.value
     }
 
     private func encode(image: CGImage) throws -> (dataBase64: String, width: Int, height: Int) {
@@ -251,8 +204,8 @@ public final class ScreenshotService: @unchecked Sendable {
         configuration.height = max(height, 1)
         configuration.showsCursor = true
         configuration.capturesAudio = false
-        if #available(macOS 14.2, *) {
-            configuration.includeChildWindows = true
+        if #available(macOS 14.0, *) {
+            configuration.ignoreShadowsSingleWindow = true
         }
         return configuration
     }
@@ -325,6 +278,44 @@ public final class ScreenshotService: @unchecked Sendable {
         return clampedRect
     }
 
+    static func contentRectPixels(
+        contentRectPoints: CGRect?,
+        sourceRectPoints: CGRect,
+        imageWidth: Int,
+        imageHeight: Int
+    ) -> CGRect? {
+        guard
+            let contentRectPoints,
+            contentRectPoints.width > 0,
+            contentRectPoints.height > 0,
+            sourceRectPoints.width > 0,
+            sourceRectPoints.height > 0,
+            imageWidth > 0,
+            imageHeight > 0
+        else {
+            return nil
+        }
+
+        let scaleX = CGFloat(imageWidth) / sourceRectPoints.width
+        let scaleY = CGFloat(imageHeight) / sourceRectPoints.height
+        let scaledRect = CGRect(
+            x: (contentRectPoints.origin.x - sourceRectPoints.origin.x) * scaleX,
+            y: (contentRectPoints.origin.y - sourceRectPoints.origin.y) * scaleY,
+            width: contentRectPoints.width * scaleX,
+            height: contentRectPoints.height * scaleY
+        )
+        let imageBounds = CGRect(x: 0, y: 0, width: imageWidth, height: imageHeight)
+        let clampedRect = scaledRect.intersection(imageBounds)
+
+        guard !clampedRect.isNull, !clampedRect.isEmpty else {
+            return nil
+        }
+        if clampedRect.equalTo(imageBounds) {
+            return nil
+        }
+        return clampedRect
+    }
+
     private static func rectAttachment(_ value: Any?) -> CGRect? {
         if let value = value as? NSValue {
             return value.rectValue
@@ -333,6 +324,13 @@ public final class ScreenshotService: @unchecked Sendable {
             return CGRect(dictionaryRepresentation: dictionary)
         }
         return nil
+    }
+
+    private static func logRect(_ rect: CGRect?) -> String {
+        guard let rect else {
+            return "nil"
+        }
+        return "x=\(Int(rect.origin.x.rounded())) y=\(Int(rect.origin.y.rounded())) width=\(Int(rect.width.rounded())) height=\(Int(rect.height.rounded()))"
     }
 
     private func bestDisplayID(for frame: CGRect, displays: [SCDisplay]) -> Int? {

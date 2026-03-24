@@ -34,8 +34,8 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
 
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let info = SCShareableContent.info(for: filter)
-        let sourceWidth = max(Int(info.contentRect.width * CGFloat(info.pointPixelScale)), 1)
-        let sourceHeight = max(Int(info.contentRect.height * CGFloat(info.pointPixelScale)), 1)
+        let sourceWidth = max(Int(window.frame.width * CGFloat(info.pointPixelScale)), 1)
+        let sourceHeight = max(Int(window.frame.height * CGFloat(info.pointPixelScale)), 1)
         let configuration = Self.streamConfiguration(sourceWidth: sourceWidth, sourceHeight: sourceHeight)
 
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
@@ -188,8 +188,8 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: 4)
         configuration.showsCursor = true
         configuration.capturesAudio = false
-        if #available(macOS 14.2, *) {
-            configuration.includeChildWindows = true
+        if #available(macOS 14.0, *) {
+            configuration.ignoreShadowsSingleWindow = true
         }
         return configuration
     }

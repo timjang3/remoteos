@@ -3,6 +3,16 @@ import AppKit
 import Foundation
 
 public final class AccessibilityService: @unchecked Sendable {
+    private struct ActionCandidate {
+        var element: AXUIElement
+        var score: Int
+        var role: String
+        var title: String?
+        var value: String?
+    }
+
+    private let log = AppLogs.accessibility
+
     public init() {}
 
     public func snapshot(for window: WindowDescriptor) -> SemanticSnapshot {
@@ -39,7 +49,16 @@ public final class AccessibilityService: @unchecked Sendable {
         guard let windowElement = windowElement(for: window) else {
             return false
         }
-        return performAction(in: windowElement, matching: label, action: kAXPressAction as CFString)
+        let normalizedLabel = LabelMatching.normalize(label)
+        guard !normalizedLabel.isEmpty else {
+            return false
+        }
+        return performBestAction(
+            in: windowElement,
+            matching: normalizedLabel,
+            action: kAXPressAction as CFString,
+            query: label
+        )
     }
 
     public func type(text: String, into label: String, in window: WindowDescriptor) -> Bool {
@@ -140,16 +159,15 @@ public final class AccessibilityService: @unchecked Sendable {
         return unsafeDowncast(focusedWindowValue, to: AXUIElement.self)
     }
 
-    private func performAction(in element: AXUIElement, matching label: String, action: CFString) -> Bool {
-        if matches(element: element, label: label) {
-            return AXUIElementPerformAction(element, action) == .success
-        }
-
-        var childrenValue: CFTypeRef?
-        AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenValue)
-        let children = (childrenValue as? [AXUIElement]) ?? []
-        for child in children {
-            if performAction(in: child, matching: label, action: action) {
+    private func performBestAction(in element: AXUIElement, matching label: String, action: CFString, query: String) -> Bool {
+        let candidates = actionCandidates(in: element, matching: label, action: action)
+            .sorted(by: Self.actionCandidateOrder(_:_:))
+        for candidate in candidates {
+            let result = AXUIElementPerformAction(candidate.element, action) == .success
+            log.notice(
+                "Accessibility action query=\(query) score=\(candidate.score) role=\(candidate.role) title=\(candidate.title ?? "") value=\(candidate.value ?? "") success=\(result)"
+            )
+            if result {
                 return true
             }
         }
@@ -216,21 +234,98 @@ public final class AccessibilityService: @unchecked Sendable {
     }
 
     private func matches(element: AXUIElement, label: String) -> Bool {
-        let lowered = label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !lowered.isEmpty else {
+        let normalizedLabel = LabelMatching.normalize(label)
+        guard !normalizedLabel.isEmpty else {
             return false
         }
+        return matchScore(for: element, normalizedLabel: normalizedLabel) != nil
+    }
 
-        let candidates = [
-            stringAttribute(kAXTitleAttribute as CFString, element: element),
-            stringAttribute(kAXDescriptionAttribute as CFString, element: element),
-            stringAttribute(kAXHelpAttribute as CFString, element: element),
-            stringAttribute(kAXValueAttribute as CFString, element: element)
-        ]
+    private func actionCandidates(in element: AXUIElement, matching label: String, action: CFString) -> [ActionCandidate] {
+        var matches: [ActionCandidate] = []
+        collectActionCandidates(in: element, matching: label, action: action, into: &matches)
+        return matches
+    }
 
-        return candidates
-            .compactMap { $0?.lowercased() }
-            .contains(where: { $0.contains(lowered) })
+    private func collectActionCandidates(
+        in element: AXUIElement,
+        matching label: String,
+        action: CFString,
+        into matches: inout [ActionCandidate]
+    ) {
+        if let score = matchScore(for: element, normalizedLabel: label), supports(action: action, element: element) {
+            matches.append(
+                ActionCandidate(
+                    element: element,
+                    score: score,
+                    role: stringAttribute(kAXRoleAttribute as CFString, element: element) ?? "?",
+                    title: stringAttribute(kAXTitleAttribute as CFString, element: element),
+                    value: stringAttribute(kAXValueAttribute as CFString, element: element)
+                )
+            )
+        }
+
+        var childrenValue: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenValue)
+        let children = (childrenValue as? [AXUIElement]) ?? []
+        for child in children {
+            collectActionCandidates(in: child, matching: label, action: action, into: &matches)
+        }
+    }
+
+    private func matchScore(for element: AXUIElement, normalizedLabel: String) -> Int? {
+        LabelMatching.bestScore(
+            candidates: [
+                stringAttribute(kAXTitleAttribute as CFString, element: element),
+                stringAttribute(kAXDescriptionAttribute as CFString, element: element),
+                stringAttribute(kAXHelpAttribute as CFString, element: element),
+                stringAttribute(kAXValueAttribute as CFString, element: element)
+            ],
+            normalizedQuery: normalizedLabel
+        )
+    }
+
+    private func supports(action: CFString, element: AXUIElement) -> Bool {
+        var actionNamesValue: CFArray?
+        guard AXUIElementCopyActionNames(element, &actionNamesValue) == .success else {
+            return false
+        }
+        let actionNames = actionNamesValue as? [String] ?? []
+        return actionNames.contains(action as String)
+    }
+
+    private static func actionCandidateOrder(_ lhs: ActionCandidate, _ rhs: ActionCandidate) -> Bool {
+        if lhs.score != rhs.score {
+            return lhs.score < rhs.score
+        }
+        let lhsRolePriority = actionRolePriority(lhs.role)
+        let rhsRolePriority = actionRolePriority(rhs.role)
+        if lhsRolePriority != rhsRolePriority {
+            return lhsRolePriority < rhsRolePriority
+        }
+        let lhsTitleLength = lhs.title?.count ?? Int.max
+        let rhsTitleLength = rhs.title?.count ?? Int.max
+        if lhsTitleLength != rhsTitleLength {
+            return lhsTitleLength < rhsTitleLength
+        }
+        return (lhs.value ?? "").count < (rhs.value ?? "").count
+    }
+
+    private static func actionRolePriority(_ role: String) -> Int {
+        switch role {
+        case "AXButton":
+            return 0
+        case "AXRadioButton", "AXLink":
+            return 1
+        case "AXTab", "AXTabGroup":
+            return 2
+        case "AXRow", "AXCell":
+            return 3
+        case "AXMenuButton":
+            return 4
+        default:
+            return 10
+        }
     }
 
     private func isDescendant(_ element: AXUIElement, of ancestor: AXUIElement) -> Bool {

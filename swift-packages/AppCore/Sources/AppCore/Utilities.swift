@@ -58,6 +58,18 @@ public extension CGRect {
     }
 }
 
+extension WindowBounds {
+    var logDescription: String {
+        "x=\(Int(x.rounded())) y=\(Int(y.rounded())) width=\(Int(width.rounded())) height=\(Int(height.rounded()))"
+    }
+}
+
+extension CGPoint {
+    var logDescription: String {
+        "x=\(Int(x.rounded())) y=\(Int(y.rounded()))"
+    }
+}
+
 func anyDictionary(from data: Data) throws -> [String: Any] {
     guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
         throw AppCoreError.invalidResponse

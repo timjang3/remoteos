@@ -14,11 +14,11 @@ import Testing
     #expect(size.height == 800)
 }
 
-@Test func streamConfigurationIncludesChildWindows() {
+@Test func streamConfigurationIgnoresShadowsForSingleWindowCapture() {
     let configuration = WindowStreamService.streamConfiguration(sourceWidth: 1440, sourceHeight: 900)
     #expect(configuration.width == 1280)
     #expect(configuration.height == 800)
-    if #available(macOS 14.2, *) {
-        #expect(configuration.includeChildWindows == true)
+    if #available(macOS 14.0, *) {
+        #expect(configuration.ignoreShadowsSingleWindow == true)
     }
 }

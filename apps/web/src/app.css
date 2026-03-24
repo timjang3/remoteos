@@ -463,9 +463,7 @@ input, textarea {
 
 .window-preview {
   flex-shrink: 0;
-  height: 38vh;
-  max-height: 340px;
-  padding-top: var(--safe-top);
+  max-height: 38vh;
   background: var(--bg);
   overflow: hidden;
   position: relative;
@@ -473,8 +471,7 @@ input, textarea {
 
 .window-preview img {
   width: 100%;
-  height: 100%;
-  object-fit: contain;
+  display: block;
   pointer-events: none;
   -webkit-user-drag: none;
 }
@@ -489,7 +486,7 @@ input, textarea {
 
 .window-preview-close {
   position: absolute;
-  top: max(8px, calc(var(--safe-top) + 4px));
+  top: 8px;
   right: max(8px, var(--safe-right));
   width: 32px;
   height: 32px;

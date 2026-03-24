@@ -2,19 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Hosted Railway defaults -->
-    <key>controlPlaneBaseURL</key>
-    <string>https://control.remoteos.app</string>
-    <key>hostMode</key>
-    <string>hosted</string>
-
     <!-- Local hosted defaults -->
-    <!--
     <key>controlPlaneBaseURL</key>
     <string>http://localhost:8787</string>
     <key>hostMode</key>
     <string>hosted</string>
-    -->
 
     <!-- Local direct defaults -->
     <!--

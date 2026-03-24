@@ -15,6 +15,13 @@
       "when": 1774157075959,
       "tag": "0001_complete_punisher",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1774335112206,
+      "tag": "0002_clever_molly_hayes",
+      "breakpoints": true
     }
   ]
 }

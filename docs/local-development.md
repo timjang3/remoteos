@@ -46,7 +46,7 @@ This gives you something like `192.168.x.x`.
 
 ```bash
 # Terminal 1 — Control-plane
-PUBLIC_PAIR_BASE_URL=http://<YOUR_IP>:5173 pnpm --filter @remoteos/control-plane dev
+HOST=0.0.0.0 PUBLIC_PAIR_BASE_URL=http://<YOUR_IP>:5173 pnpm --filter @remoteos/control-plane dev
 
 # Terminal 2 — Web client (--host exposes it on your network)
 cd apps/web && npx vite --host
@@ -84,18 +84,20 @@ Plain LAN URLs like `http://192.168.x.x:5173` are useful for pairing and general
 
 | Service        | Port | Bind address |
 | -------------- | ---- | ------------ |
-| Control-plane  | 8787 | 0.0.0.0      |
+| Control-plane  | 8787 | 127.0.0.1 by default / set `HOST=0.0.0.0` for LAN testing |
 | Web client     | 5173 | localhost (default) / 0.0.0.0 (with `--host`) |
 
 ## Environment Variables (Control-plane)
 
 | Variable               | Default                    | Description                        |
 | ---------------------- | -------------------------- | ---------------------------------- |
-| `HOST`                 | `0.0.0.0`                 | Server bind address                |
+| `HOST`                 | `127.0.0.1`               | Server bind address                |
 | `PORT`                 | `8787`                     | Server port                        |
 | `PUBLIC_PAIR_BASE_URL` | `http://localhost:5173`    | Base URL for pairing links         |
 | `PUBLIC_HTTP_BASE_URL` | Inferred from pair URL     | Public HTTP URL for the API        |
 | `PUBLIC_WS_BASE_URL`   | Inferred from pair URL     | Public WebSocket URL               |
+| `TOKEN_HASH_SECRET`    | Falls back to `BETTER_AUTH_SECRET` when set | HMAC secret for device/session/pairing/enrollment credentials |
+| `TRUST_PROXY`          | `false` in authless mode, private-network allowlist in hosted mode | Explicit trusted proxy hops or networks |
 
 ## Useful Commands
 

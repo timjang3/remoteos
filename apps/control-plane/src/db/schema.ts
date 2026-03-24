@@ -17,7 +17,7 @@ export const devices = pgTable(
     userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
     name: text("name").notNull(),
     mode: text("mode").$type<Device["mode"]>().notNull(),
-    deviceSecret: text("device_secret").notNull(),
+    deviceSecretHash: text("device_secret_hash").notNull(),
     registeredAt: timestamp("registered_at", {
       mode: "date",
       withTimezone: true
@@ -29,7 +29,7 @@ export const devices = pgTable(
   },
   (table) => [
     index("devices_user_id_idx").on(table.userId),
-    uniqueIndex("devices_device_secret_idx").on(table.deviceSecret)
+    uniqueIndex("devices_device_secret_hash_idx").on(table.deviceSecretHash)
   ]
 );
 
@@ -37,7 +37,7 @@ export const clientSessions = pgTable(
   "client_sessions",
   {
     id: text("id").primaryKey(),
-    token: text("token").notNull(),
+    tokenHash: text("token_hash").notNull(),
     deviceId: text("device_id")
       .notNull()
       .references(() => devices.id, { onDelete: "cascade" }),
@@ -48,7 +48,7 @@ export const clientSessions = pgTable(
     }).notNull()
   },
   (table) => [
-    uniqueIndex("client_sessions_token_idx").on(table.token),
+    uniqueIndex("client_sessions_token_hash_idx").on(table.tokenHash),
     index("client_sessions_device_id_idx").on(table.deviceId)
   ]
 );
@@ -60,9 +60,9 @@ export const pairings = pgTable(
     deviceId: text("device_id")
       .notNull()
       .references(() => devices.id, { onDelete: "cascade" }),
-    pairingCode: text("pairing_code").notNull(),
+    pairingCodeHash: text("pairing_code_hash").notNull(),
     claimed: boolean("claimed").notNull(),
-    clientToken: text("client_token"),
+    clientTokenHash: text("client_token_hash"),
     clientName: text("client_name"),
     expiresAt: timestamp("expires_at", {
       mode: "date",
@@ -72,12 +72,12 @@ export const pairings = pgTable(
       mode: "date",
       withTimezone: true
     }).notNull(),
-    pairingUrl: text("pairing_url").notNull()
+    pairingBaseUrl: text("pairing_base_url").notNull()
   },
   (table) => [
-    uniqueIndex("pairings_pairing_code_idx").on(table.pairingCode),
+    uniqueIndex("pairings_pairing_code_hash_idx").on(table.pairingCodeHash),
     index("pairings_device_id_idx").on(table.deviceId),
-    index("pairings_client_token_idx").on(table.clientToken)
+    index("pairings_client_token_hash_idx").on(table.clientTokenHash)
   ]
 );
 
@@ -88,7 +88,7 @@ export const deviceEnrollments = pgTable(
     deviceId: text("device_id")
       .notNull()
       .references(() => devices.id, { onDelete: "cascade" }),
-    token: text("token").notNull(),
+    tokenHash: text("token_hash").notNull(),
     status: text("status").$type<"pending" | "approved" | "expired">().notNull(),
     expiresAt: timestamp("expires_at", {
       mode: "date",
@@ -105,7 +105,7 @@ export const deviceEnrollments = pgTable(
     approvedByUserId: text("approved_by_user_id").references(() => user.id, { onDelete: "set null" })
   },
   (table) => [
-    uniqueIndex("device_enrollments_token_idx").on(table.token),
+    uniqueIndex("device_enrollments_token_hash_idx").on(table.tokenHash),
     index("device_enrollments_device_id_idx").on(table.deviceId),
     index("device_enrollments_approved_by_user_id_idx").on(table.approvedByUserId)
   ]

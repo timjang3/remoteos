@@ -644,7 +644,7 @@ public actor CodexAppServerClient {
     public func startTurn(prompt: String, targetWindowID: Int?) async throws -> AgentTurnPayload {
         let clock = ContinuousClock()
         let startedAt = clock.now
-        log.info("Starting turn targetWindowID=\(targetWindowID.map(String.init) ?? "nil") promptPreview=\"\(logPreview(prompt, limit: 100))\"")
+        log.info("Starting turn targetWindowID=\(targetWindowID.map(String.init) ?? "nil")")
         let readiness = await prepareForTurns()
         guard readiness.installed, readiness.authenticated else {
             log.error("Cannot start turn because Codex is unavailable lastError=\(readiness.lastError ?? "none")")
@@ -852,7 +852,7 @@ public actor CodexAppServerClient {
                 guard let self else {
                     return
                 }
-                self.log.warning("Codex stderr: \(line)")
+                self.log.warning("Codex stderr line received bytes=\(line.utf8.count)")
                 await self.emitTrace(level: "warning", kind: "codex_stderr", message: line)
             },
             onEnd: {}

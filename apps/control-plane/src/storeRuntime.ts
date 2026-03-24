@@ -15,7 +15,7 @@ import type {
   ClientSession,
   DeviceRuntimeRecord,
   HostStatus,
-  PersistedDevice
+  PersistedRuntimeDevice
 } from "./storeInterface.js";
 
 export abstract class BrokerRuntimeState {
@@ -57,7 +57,7 @@ export abstract class BrokerRuntimeState {
     };
   }
 
-  protected ensureRuntimeDevice(persisted: PersistedDevice) {
+  protected ensureRuntimeDevice(persisted: PersistedRuntimeDevice) {
     const existing = this.devices.get(persisted.device.id);
     if (existing) {
       existing.device = {
@@ -65,7 +65,7 @@ export abstract class BrokerRuntimeState {
         online: existing.device.online,
         lastSeenAt: existing.device.lastSeenAt
       };
-      existing.deviceSecret = persisted.deviceSecret;
+      existing.deviceSecretHash = persisted.deviceSecretHash;
       existing.userId = persisted.userId;
       return existing;
     }

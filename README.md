@@ -31,10 +31,12 @@ swift run --package-path apps/macos
 RemoteOS keeps the open-source and hosted flows in the same repo.
 
 - Default OSS/local mode: leave `AUTH_MODE` unset or set it to `none`. The control-plane runs without auth and uses the in-memory store unless you also provide `DATABASE_URL`.
-- Persistent OSS/local mode: set `DATABASE_URL` to use Postgres with the same control-plane API, but keep `AUTH_MODE=none`.
-- Hosted mode: set `AUTH_MODE=required` and provide `DATABASE_URL`, `BETTER_AUTH_SECRET`, and `ALLOWED_ORIGINS`. Google sign-in uses `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+- Persistent OSS/local mode: set `DATABASE_URL` to use Postgres with the same control-plane API, keep `AUTH_MODE=none`, and also set `TOKEN_HASH_SECRET`.
+- Hosted mode: set `AUTH_MODE=required` and provide `DATABASE_URL`, `BETTER_AUTH_SECRET`, and `ALLOWED_ORIGINS`. For non-local deployments, `PUBLIC_PAIR_BASE_URL`, `PUBLIC_HTTP_BASE_URL`, `PUBLIC_WS_BASE_URL`, and every `ALLOWED_ORIGINS` entry must use HTTPS/WSS. Google sign-in uses `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
 
 Hosted mode uses Better Auth for the web app and a one-time browser approval flow for new Macs. Sign in on the web, approve the Mac enrollment page that opens from the app, and then let the Mac reconnect with its saved device identity.
+
+The control-plane binds to `127.0.0.1` by default in every mode. Expose it off-host only by setting `HOST` explicitly, for example `HOST=0.0.0.0` for a LAN test box or the address your reverse proxy should listen on.
 
 For local Google OAuth, configure the Google redirect URI as `http://localhost:8787/api/auth/callback/google`.
 

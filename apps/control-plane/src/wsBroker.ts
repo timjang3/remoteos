@@ -96,101 +96,113 @@ export async function registerWsBroker(
                 deviceId: ticket.deviceId
               };
             })()
-          : (() => {
-              const query = z
-                .object({
-                  deviceId: z.string().min(1),
-                  deviceSecret: z.string().min(1)
-                })
-                .parse(request.query);
-              const device = store.getDevice(query.deviceId);
-              if (!device || device.deviceSecret !== query.deviceSecret) {
-                return undefined;
-              }
-              return {
-                deviceId: query.deviceId
+          : undefined;
+
+      const attachAuthorizedHost = async () => {
+        try {
+          let resolvedHostIdentity = hostIdentity;
+          if (!resolvedHostIdentity) {
+            const query = z
+              .object({
+                deviceId: z.string().min(1),
+                deviceSecret: z.string().min(1)
+              })
+              .parse(request.query);
+            const device = await store.authenticateHostDevice(query.deviceId, query.deviceSecret);
+            if (device) {
+              resolvedHostIdentity = {
+                deviceId: device.device.id
               };
-            })();
-
-      if (!hostIdentity) {
-        routedSocket.send(JSON.stringify(createRpcError(null, 401, "Unauthorized host")));
-        routedSocket.close();
-        return;
-      }
-
-      store.attachHost(hostIdentity.deviceId, routedSocket);
-      routedSocket.deviceId = hostIdentity.deviceId;
-      const currentStatus = store.getCurrentHostStatus(hostIdentity.deviceId);
-      for (const clientSocket of store.getConnectedClientSockets(hostIdentity.deviceId)) {
-        queueCurrentHostState(clientSocket, currentStatus);
-      }
-      requestHostStateSync(routedSocket);
-
-      routedSocket.on("message", (raw: RawData) => {
-        const message = parseJson(raw);
-        if (!message) {
-          send(routedSocket, createRpcError(null, -32700, "Invalid JSON"));
-          return;
-        }
-
-        if ("method" in message) {
-          const notification = rpcNotificationSchema.safeParse(message);
-          if (notification.success) {
-            if (notification.data.method === "windows.updated") {
-              const parsed = z
-                .object({
-                  windows: z.array(windowDescriptorSchema)
-                })
-                .safeParse(notification.data.params);
-              if (parsed.success) {
-                store.updateWindows(hostIdentity.deviceId, parsed.data.windows);
-              }
-            } else if (notification.data.method === "host.status") {
-              const parsedStatus = hostStatusSchema.safeParse(notification.data.params);
-              if (parsedStatus.success) {
-                store.updateHostStatus(hostIdentity.deviceId, parsedStatus.data);
-              }
             }
+          }
 
-            for (const clientSocket of store.getConnectedClientSockets(hostIdentity.deviceId)) {
-              if (notification.data.method === "window.frame") {
-                queueSocketFrame(clientSocket, notification.data);
-              } else {
-                queueSocketMessage(clientSocket, notification.data);
-              }
-            }
+          if (!resolvedHostIdentity) {
+            routedSocket.send(JSON.stringify(createRpcError(null, 401, "Unauthorized host")));
+            routedSocket.close();
             return;
           }
-        }
 
-        const result = rpcSuccessSchema.safeParse(message);
-        const error = rpcErrorSchema.safeParse(message);
-        const requestMessage = rpcRequestSchema.safeParse(message);
+          store.attachHost(resolvedHostIdentity.deviceId, routedSocket);
+          routedSocket.deviceId = resolvedHostIdentity.deviceId;
+          const currentStatus = store.getCurrentHostStatus(resolvedHostIdentity.deviceId);
+          for (const clientSocket of store.getConnectedClientSockets(resolvedHostIdentity.deviceId)) {
+            queueCurrentHostState(clientSocket, currentStatus);
+          }
+          requestHostStateSync(routedSocket);
 
-        if (!result.success && !error.success && !requestMessage.success) {
-          send(routedSocket, createRpcError(null, -32600, "Invalid JSON-RPC message"));
+          routedSocket.on("message", (raw: RawData) => {
+            const message = parseJson(raw);
+            if (!message) {
+              send(routedSocket, createRpcError(null, -32700, "Invalid JSON"));
+              return;
+            }
+
+            if ("method" in message) {
+              const notification = rpcNotificationSchema.safeParse(message);
+              if (notification.success) {
+                if (notification.data.method === "windows.updated") {
+                  const parsed = z
+                    .object({
+                      windows: z.array(windowDescriptorSchema)
+                    })
+                    .safeParse(notification.data.params);
+                  if (parsed.success) {
+                    store.updateWindows(resolvedHostIdentity.deviceId, parsed.data.windows);
+                  }
+                } else if (notification.data.method === "host.status") {
+                  const parsedStatus = hostStatusSchema.safeParse(notification.data.params);
+                  if (parsedStatus.success) {
+                    store.updateHostStatus(resolvedHostIdentity.deviceId, parsedStatus.data);
+                  }
+                }
+
+                for (const clientSocket of store.getConnectedClientSockets(resolvedHostIdentity.deviceId)) {
+                  if (notification.data.method === "window.frame") {
+                    queueSocketFrame(clientSocket, notification.data);
+                  } else {
+                    queueSocketMessage(clientSocket, notification.data);
+                  }
+                }
+                return;
+              }
+            }
+
+            const result = rpcSuccessSchema.safeParse(message);
+            const error = rpcErrorSchema.safeParse(message);
+            const requestMessage = rpcRequestSchema.safeParse(message);
+
+            if (!result.success && !error.success && !requestMessage.success) {
+              send(routedSocket, createRpcError(null, -32600, "Invalid JSON-RPC message"));
+              return;
+            }
+
+            for (const clientSocket of store.getConnectedClientSockets(resolvedHostIdentity.deviceId)) {
+              queueSocketMessage(clientSocket, message);
+            }
+          });
+
+          routedSocket.on("close", () => {
+            store.detachHostSocket(resolvedHostIdentity.deviceId, routedSocket);
+            clearSocketQueue(routedSocket);
+            const status = store.getCurrentHostStatus(resolvedHostIdentity.deviceId);
+            if (status) {
+              for (const clientSocket of store.getConnectedClientSockets(resolvedHostIdentity.deviceId)) {
+                queueSocketMessage(clientSocket, {
+                  jsonrpc: "2.0",
+                  method: "host.status",
+                  params: status
+                });
+              }
+            }
+          });
+        } catch {
+          routedSocket.send(JSON.stringify(createRpcError(null, 401, "Unauthorized host")));
+          routedSocket.close();
           return;
         }
+      };
 
-        for (const clientSocket of store.getConnectedClientSockets(hostIdentity.deviceId)) {
-          queueSocketMessage(clientSocket, message);
-        }
-      });
-
-      routedSocket.on("close", () => {
-        store.detachHostSocket(hostIdentity.deviceId, routedSocket);
-        clearSocketQueue(routedSocket);
-        const status = store.getCurrentHostStatus(hostIdentity.deviceId);
-        if (status) {
-          for (const clientSocket of store.getConnectedClientSockets(hostIdentity.deviceId)) {
-            queueSocketMessage(clientSocket, {
-              jsonrpc: "2.0",
-              method: "host.status",
-              params: status
-            });
-          }
-        }
-      });
+      void attachAuthorizedHost();
     }
   );
 

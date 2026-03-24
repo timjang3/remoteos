@@ -10,6 +10,7 @@ import type {
   DeviceEnrollment,
   DeviceRegistrationResult
 } from "./storeInterface.js";
+import { createMemoryCredentialHasher } from "./credentialHasher.js";
 import { BrokerRuntimeState } from "./storeRuntime.js";
 
 type PairingRecord = PairingSession & {
@@ -18,6 +19,8 @@ type PairingRecord = PairingSession & {
 };
 
 export class MemoryBrokerStore extends BrokerRuntimeState implements BrokerStore {
+  private readonly credentialHasher = createMemoryCredentialHasher();
+
   private readonly pairingsByCode = new Map<string, PairingRecord>();
 
   private readonly pairingsById = new Map<string, PairingRecord>();
@@ -86,7 +89,11 @@ export class MemoryBrokerStore extends BrokerRuntimeState implements BrokerStore
     if (input.existingDeviceId) {
       const existing = this.devices.get(input.existingDeviceId);
 
-      if (!input.existingDeviceSecret || !existing || existing.deviceSecret !== input.existingDeviceSecret) {
+      if (
+        !input.existingDeviceSecret
+        || !existing
+        || !this.credentialHasher.verify("device_secret", input.existingDeviceSecret, existing.deviceSecretHash)
+      ) {
         throw new Error("Unauthorized device");
       }
 
@@ -104,7 +111,7 @@ export class MemoryBrokerStore extends BrokerRuntimeState implements BrokerStore
         return {
           approvalRequired: true,
           deviceId: existing.device.id,
-          deviceSecret: existing.deviceSecret,
+          deviceSecret: input.existingDeviceSecret,
           enrollmentUrl: enrollment.enrollmentUrl,
           enrollmentToken: enrollment.token,
           expiresAt: enrollment.expiresAt
@@ -112,7 +119,7 @@ export class MemoryBrokerStore extends BrokerRuntimeState implements BrokerStore
       }
       return {
         device: existing.device,
-        deviceSecret: existing.deviceSecret
+        deviceSecret: input.existingDeviceSecret
       };
     }
 
@@ -134,7 +141,7 @@ export class MemoryBrokerStore extends BrokerRuntimeState implements BrokerStore
 
     this.ensureRuntimeDevice({
       device,
-      deviceSecret,
+      deviceSecretHash: this.credentialHasher.hash("device_secret", deviceSecret),
       userId: input.userId ?? null
     });
 
@@ -212,7 +219,21 @@ export class MemoryBrokerStore extends BrokerRuntimeState implements BrokerStore
 
     return {
       device: device.device,
-      deviceSecret: device.deviceSecret,
+      userId: device.userId
+    };
+  }
+
+  async authenticateHostDevice(deviceId: string, deviceSecret: string) {
+    const device = this.devices.get(deviceId);
+    if (
+      !device
+      || !this.credentialHasher.verify("device_secret", deviceSecret, device.deviceSecretHash)
+    ) {
+      return undefined;
+    }
+
+    return {
+      device: device.device,
       userId: device.userId
     };
   }
@@ -225,7 +246,10 @@ export class MemoryBrokerStore extends BrokerRuntimeState implements BrokerStore
     requireOwnership?: boolean;
   }) {
     const record = this.devices.get(input.deviceId);
-    if (!record || record.deviceSecret !== input.deviceSecret) {
+    if (
+      !record
+      || !this.credentialHasher.verify("device_secret", input.deviceSecret, record.deviceSecretHash)
+    ) {
       throw new Error("Unauthorized device");
     }
     if (input.requireOwnership && !record.userId) {

@@ -41,8 +41,13 @@ export type PendingDeviceRegistration = {
 
 export type DeviceRegistrationResult = DeviceRegistration | PendingDeviceRegistration;
 
-export type PersistedDevice = DeviceRegistration & {
+export type PersistedDevice = {
+  device: Device;
   userId: string | null;
+};
+
+export type PersistedRuntimeDevice = PersistedDevice & {
+  deviceSecretHash: string;
 };
 
 export type ClientSession = {
@@ -57,7 +62,7 @@ export type ClientRuntimeRecord = ClientSession & {
   socket: WebSocket | undefined;
 };
 
-export type DeviceRuntimeRecord = PersistedDevice & {
+export type DeviceRuntimeRecord = PersistedRuntimeDevice & {
   hostSocket: WebSocket | undefined;
   status: HostStatus | undefined;
   windows: WindowDescriptor[];
@@ -83,6 +88,7 @@ export interface BrokerStore {
   getEnrollment(token: string): Promise<DeviceEnrollment | undefined>;
   approveEnrollment(token: string, userId: string): Promise<DeviceEnrollment>;
   getPersistedDevice(deviceId: string): Promise<PersistedDevice | undefined>;
+  authenticateHostDevice(deviceId: string, deviceSecret: string): Promise<PersistedDevice | undefined>;
   createPairing(input: {
     deviceId: string;
     deviceSecret: string;

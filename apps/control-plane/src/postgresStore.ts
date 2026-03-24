@@ -5,6 +5,7 @@ import type {
 import { and, eq, gt } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
+import { BrokerCredentialHasher } from "./credentialHasher.js";
 import type { ControlPlaneDb } from "./db/index.js";
 import {
   clientSessions,
@@ -17,7 +18,9 @@ import type {
   ClientSession,
   DeviceEnrollment,
   DeviceRegistrationResult,
-  PersistedDevice
+  PendingDeviceRegistration,
+  PersistedDevice,
+  PersistedRuntimeDevice
 } from "./storeInterface.js";
 import { BrokerRuntimeState } from "./storeRuntime.js";
 
@@ -31,14 +34,18 @@ function serializeDate(value: Date | null) {
 }
 
 export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerStore {
+  private readonly credentialHasher: BrokerCredentialHasher;
+
   constructor(
     private readonly db: ControlPlaneDb,
-    private readonly publicEnrollmentBaseUrl: string
+    private readonly publicEnrollmentBaseUrl: string,
+    tokenHashSecret: string
   ) {
     super();
+    this.credentialHasher = new BrokerCredentialHasher(tokenHashSecret);
   }
 
-  private deviceFromRow(row: DeviceRow): PersistedDevice {
+  private deviceFromRow(row: DeviceRow): PersistedRuntimeDevice {
     return {
       device: {
         id: row.id,
@@ -48,38 +55,38 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
         registeredAt: row.registeredAt.toISOString(),
         lastSeenAt: serializeDate(row.lastSeenAt)
       },
-      deviceSecret: row.deviceSecret,
+      deviceSecretHash: row.deviceSecretHash,
       userId: row.userId
     };
   }
 
-  private pairingFromRow(row: PairingRow): PairingSession {
+  private pairingFromRow(row: PairingRow, pairingCode: string): PairingSession {
     return {
       id: row.id,
       deviceId: row.deviceId,
-      pairingCode: row.pairingCode,
+      pairingCode,
       claimed: row.claimed,
       createdAt: row.createdAt.toISOString(),
       expiresAt: row.expiresAt.toISOString(),
-      pairingUrl: row.pairingUrl
+      pairingUrl: this.buildPairingUrl(row.pairingBaseUrl, pairingCode)
     };
   }
 
-  private clientSessionFromRow(row: ClientSessionRow, userId: string | null): ClientSession {
+  private clientSessionFromRow(row: ClientSessionRow, userId: string | null, token: string): ClientSession {
     return {
       id: row.id,
-      token: row.token,
+      token,
       deviceId: row.deviceId,
       name: row.name,
       userId
     };
   }
 
-  private enrollmentFromRow(row: DeviceEnrollmentRow, deviceRow?: DeviceRow): DeviceEnrollment {
+  private enrollmentFromRow(row: DeviceEnrollmentRow, token: string, deviceRow?: DeviceRow): DeviceEnrollment {
     const runtimeDevice = this.devices.get(row.deviceId)?.device;
     return {
       id: row.id,
-      token: row.token,
+      token,
       deviceId: row.deviceId,
       deviceName: deviceRow?.name ?? runtimeDevice?.name ?? "Unknown Mac",
       deviceMode: deviceRow?.mode ?? runtimeDevice?.mode ?? "hosted",
@@ -87,7 +94,7 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
         row.status === "pending" && row.expiresAt.getTime() <= Date.now()
           ? "expired"
           : row.status,
-      enrollmentUrl: super.buildEnrollmentUrl(this.publicEnrollmentBaseUrl, row.token),
+      enrollmentUrl: super.buildEnrollmentUrl(this.publicEnrollmentBaseUrl, token),
       expiresAt: row.expiresAt.toISOString(),
       createdAt: row.createdAt.toISOString(),
       approvedAt: serializeDate(row.approvedAt),
@@ -106,10 +113,11 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
   }
 
   private async loadEnrollmentRow(token: string) {
+    const tokenHash = this.credentialHasher.hash("enrollment_token", token);
     const [row] = await this.db
       .select()
       .from(deviceEnrollments)
-      .where(eq(deviceEnrollments.token, token))
+      .where(eq(deviceEnrollments.tokenHash, tokenHash))
       .limit(1);
 
     return row;
@@ -130,7 +138,11 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
     }
   }
 
-  private async createEnrollment(deviceRow: DeviceRow, publicEnrollmentBaseUrl: string) {
+  private async createEnrollment(
+    deviceRow: DeviceRow,
+    publicEnrollmentBaseUrl: string,
+    deviceSecret: string
+  ): Promise<PendingDeviceRegistration> {
     await this.db
       .update(deviceEnrollments)
       .set({
@@ -143,12 +155,13 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
         )
       );
 
+    const token = nanoid(32);
     const [enrollment] = await this.db
       .insert(deviceEnrollments)
       .values({
         id: nanoid(),
         deviceId: deviceRow.id,
-        token: nanoid(32),
+        tokenHash: this.credentialHasher.hash("enrollment_token", token),
         status: "pending",
         expiresAt: new Date(Date.now() + 1000 * 60 * 15),
         createdAt: new Date(),
@@ -162,15 +175,12 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
     }
 
     return {
-      row: enrollment,
-      payload: {
-        approvalRequired: true as const,
-        deviceId: deviceRow.id,
-        deviceSecret: deviceRow.deviceSecret,
-        enrollmentUrl: this.buildEnrollmentUrl(publicEnrollmentBaseUrl, enrollment.token),
-        enrollmentToken: enrollment.token,
-        expiresAt: enrollment.expiresAt.toISOString()
-      }
+      approvalRequired: true,
+      deviceId: deviceRow.id,
+      deviceSecret,
+      enrollmentUrl: this.buildEnrollmentUrl(publicEnrollmentBaseUrl, token),
+      enrollmentToken: token,
+      expiresAt: enrollment.expiresAt.toISOString()
     };
   }
 
@@ -184,7 +194,11 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
   }): Promise<DeviceRegistrationResult> {
     if (input.existingDeviceId) {
       const existing = await this.loadDeviceRow(input.existingDeviceId);
-      if (!input.existingDeviceSecret || !existing || existing.deviceSecret !== input.existingDeviceSecret) {
+      if (
+        !input.existingDeviceSecret
+        || !existing
+        || !this.credentialHasher.verify("device_secret", input.existingDeviceSecret, existing.deviceSecretHash)
+      ) {
         throw new Error("Unauthorized device");
       }
 
@@ -203,12 +217,11 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
       const finalRow = updated ?? existing;
       const persisted = this.hydrateDevice(finalRow);
       if (input.publicEnrollmentBaseUrl && !finalRow.userId) {
-        const enrollment = await this.createEnrollment(finalRow, input.publicEnrollmentBaseUrl);
-        return enrollment.payload;
+        return this.createEnrollment(finalRow, input.publicEnrollmentBaseUrl, input.existingDeviceSecret);
       }
       return {
         device: persisted.device,
-        deviceSecret: persisted.deviceSecret
+        deviceSecret: input.existingDeviceSecret
       };
     }
 
@@ -216,6 +229,7 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
       throw new Error("Unauthorized device");
     }
 
+    const deviceSecret = nanoid(24);
     const now = new Date();
     const [inserted] = await this.db
       .insert(devices)
@@ -224,7 +238,7 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
         userId: input.userId ?? null,
         name: input.name,
         mode: input.mode,
-        deviceSecret: nanoid(24),
+        deviceSecretHash: this.credentialHasher.hash("device_secret", deviceSecret),
         registeredAt: now,
         lastSeenAt: null
       })
@@ -236,12 +250,11 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
 
     const persisted = this.hydrateDevice(inserted);
     if (input.publicEnrollmentBaseUrl) {
-      const enrollment = await this.createEnrollment(inserted, input.publicEnrollmentBaseUrl);
-      return enrollment.payload;
+      return this.createEnrollment(inserted, input.publicEnrollmentBaseUrl, deviceSecret);
     }
     return {
       device: persisted.device,
-      deviceSecret: persisted.deviceSecret
+      deviceSecret
     };
   }
 
@@ -265,11 +278,11 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
         .where(eq(deviceEnrollments.id, row.id))
         .returning();
 
-      return this.enrollmentFromRow(expired ?? row, deviceRow);
+      return this.enrollmentFromRow(expired ?? row, token, deviceRow);
     }
 
     this.hydrateDevice(deviceRow);
-    return this.enrollmentFromRow(row, deviceRow);
+    return this.enrollmentFromRow(row, token, deviceRow);
   }
 
   async approveEnrollment(token: string, userId: string) {
@@ -281,7 +294,7 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
         })
         .from(deviceEnrollments)
         .innerJoin(devices, eq(deviceEnrollments.deviceId, devices.id))
-        .where(eq(deviceEnrollments.token, token))
+        .where(eq(deviceEnrollments.tokenHash, this.credentialHasher.hash("enrollment_token", token)))
         .limit(1);
 
       if (!record) {
@@ -305,7 +318,7 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
           throw new Error("Enrollment token already approved");
         }
         this.hydrateDevice(record.device);
-        return this.enrollmentFromRow(record.enrollment, record.device);
+        return this.enrollmentFromRow(record.enrollment, token, record.device);
       }
 
       if (record.enrollment.status === "expired") {
@@ -349,7 +362,7 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
       const deviceRow = updatedDevice ?? record.device;
       const enrollmentRow = updatedEnrollment ?? record.enrollment;
       this.hydrateDevice(deviceRow);
-      return this.enrollmentFromRow(enrollmentRow, deviceRow);
+      return this.enrollmentFromRow(enrollmentRow, token, deviceRow);
     });
   }
 
@@ -361,6 +374,22 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
     return this.hydrateDevice(row);
   }
 
+  async authenticateHostDevice(deviceId: string, deviceSecret: string) {
+    const row = await this.loadDeviceRow(deviceId);
+    if (
+      !row
+      || !this.credentialHasher.verify("device_secret", deviceSecret, row.deviceSecretHash)
+    ) {
+      return undefined;
+    }
+
+    const hydrated = this.hydrateDevice(row);
+    return {
+      device: hydrated.device,
+      userId: hydrated.userId
+    };
+  }
+
   async createPairing(input: {
     deviceId: string;
     deviceSecret: string;
@@ -369,7 +398,10 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
     requireOwnership?: boolean;
   }) {
     const row = await this.loadDeviceRow(input.deviceId);
-    if (!row || row.deviceSecret !== input.deviceSecret) {
+    if (
+      !row
+      || !this.credentialHasher.verify("device_secret", input.deviceSecret, row.deviceSecretHash)
+    ) {
       throw new Error("Unauthorized device");
     }
     if (input.requireOwnership && !row.userId) {
@@ -384,13 +416,13 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
       .values({
         id: nanoid(),
         deviceId: row.id,
-        pairingCode,
+        pairingCodeHash: this.credentialHasher.hash("pairing_code", pairingCode),
         claimed: false,
-        clientToken: null,
+        clientTokenHash: null,
         clientName: null,
         expiresAt: new Date(Date.now() + 1000 * 60 * 15),
         createdAt: new Date(),
-        pairingUrl: this.buildPairingUrl(input.publicPairBaseUrl, pairingCode)
+        pairingBaseUrl: input.publicPairBaseUrl
       })
       .returning();
 
@@ -398,10 +430,11 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
       throw new Error("Failed to create pairing");
     }
 
-    return this.pairingFromRow(created);
+    return this.pairingFromRow(created, pairingCode);
   }
 
   async claimPairing(pairingCode: string, clientName: string, userId?: string | null) {
+    const pairingCodeHash = this.credentialHasher.hash("pairing_code", pairingCode);
     const result = await this.db.transaction(async (tx) => {
       const [pairingRecord] = await tx
         .select({
@@ -410,7 +443,7 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
         })
         .from(pairings)
         .innerJoin(devices, eq(pairings.deviceId, devices.id))
-        .where(eq(pairings.pairingCode, pairingCode))
+        .where(eq(pairings.pairingCodeHash, pairingCodeHash))
         .limit(1);
 
       if (!pairingRecord) {
@@ -427,11 +460,12 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
       }
 
       const clientToken = nanoid(28);
+      const clientTokenHash = this.credentialHasher.hash("client_token", clientToken);
       const [updatedPairing] = await tx
         .update(pairings)
         .set({
           claimed: true,
-          clientToken,
+          clientTokenHash,
           clientName
         })
         .where(
@@ -451,7 +485,7 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
         .insert(clientSessions)
         .values({
           id: nanoid(),
-          token: clientToken,
+          tokenHash: clientTokenHash,
           deviceId: pairingRecord.pairing.deviceId,
           name: clientName,
           createdAt: new Date()
@@ -465,16 +499,17 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
       return {
         pairing: updatedPairing,
         session: sessionRow,
-        device: pairingRecord.device
+        device: pairingRecord.device,
+        clientToken
       };
     });
 
     this.hydrateDevice(result.device);
-    this.cacheClientSession(this.clientSessionFromRow(result.session, result.device.userId));
+    this.cacheClientSession(this.clientSessionFromRow(result.session, result.device.userId, result.clientToken));
 
     return {
-      pairing: this.pairingFromRow(result.pairing),
-      clientToken: result.session.token
+      pairing: this.pairingFromRow(result.pairing, pairingCode),
+      clientToken: result.clientToken
     };
   }
 
@@ -491,7 +526,7 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
       })
       .from(clientSessions)
       .innerJoin(devices, eq(clientSessions.deviceId, devices.id))
-      .where(eq(clientSessions.token, token))
+      .where(eq(clientSessions.tokenHash, this.credentialHasher.hash("client_token", token)))
       .limit(1);
 
     if (!row) {
@@ -499,7 +534,7 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
     }
 
     this.hydrateDevice(row.device);
-    return this.cacheClientSession(this.clientSessionFromRow(row.session, row.device.userId));
+    return this.cacheClientSession(this.clientSessionFromRow(row.session, row.device.userId, token));
   }
 
   async getBootstrap(token: string, userId?: string | null) {

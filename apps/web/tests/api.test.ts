@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { BrokerClient, claimPairing, createSpeechTranscription, getBootstrap, resolveControlPlaneBaseUrl } from "../src/api";
+import {
+  BrokerClient,
+  claimPairing,
+  createSpeechTranscription,
+  getBootstrap,
+  resolveControlPlaneBaseUrl,
+  storeControlPlaneBaseUrl
+} from "../src/api";
 
 const originalWindow = globalThis.window;
 const originalFetch = globalThis.fetch;
@@ -23,6 +30,35 @@ function installWindow(href: string) {
       }
     }
   });
+}
+
+function isLoopbackHost(hostname: string) {
+  return (
+    hostname === "localhost"
+    || hostname === "0.0.0.0"
+    || hostname === "::1"
+    || hostname === "[::1]"
+    || hostname.startsWith("127.")
+  );
+}
+
+function rewriteLoopbackForTest(rawUrl: string, href: string) {
+  const current = new URL(href);
+  const target = new URL(rawUrl, current.href);
+  if (isLoopbackHost(target.hostname) && !isLoopbackHost(current.hostname)) {
+    target.hostname = current.hostname;
+  }
+  return target.toString().replace(/\/$/, "");
+}
+
+function expectedConfiguredBaseUrl(href: string) {
+  const envBaseUrl = import.meta.env.VITE_REMOTEOS_HTTP_BASE_URL;
+  if (envBaseUrl) {
+    return rewriteLoopbackForTest(envBaseUrl, href);
+  }
+
+  const current = new URL(href);
+  return `${current.protocol}//${current.hostname}:8787`;
 }
 
 describe("api base URL handling", () => {
@@ -54,9 +90,34 @@ describe("api base URL handling", () => {
   });
 
   it("rewrites loopback api query params to the current host", () => {
-    installWindow("http://192.168.1.25:5173/?code=ABC123&api=http://localhost:8787");
+    installWindow("http://localhost:5173/?code=ABC123&api=http://127.0.0.1:8787");
 
-    expect(resolveControlPlaneBaseUrl()).toBe("http://192.168.1.25:8787");
+    expect(resolveControlPlaneBaseUrl()).toBe("http://127.0.0.1:8787");
+  });
+
+  it("ignores arbitrary api rebinding targets", () => {
+    const href = "http://192.168.1.25:5173/?api=https://evil.example";
+    installWindow(href);
+
+    expect(resolveControlPlaneBaseUrl()).toBe(expectedConfiguredBaseUrl(href));
+    expect(window.localStorage.getItem("remoteos.controlPlaneBaseUrl")).toBe(expectedConfiguredBaseUrl(href));
+  });
+
+  it("refuses to persist arbitrary remote control-plane origins", () => {
+    installWindow("http://192.168.1.25:5173/");
+
+    storeControlPlaneBaseUrl("https://evil.example");
+
+    expect(window.localStorage.getItem("remoteos.controlPlaneBaseUrl")).toBeNull();
+  });
+
+  it("drops stored non-http control-plane URLs", () => {
+    const href = "http://192.168.1.25:5173/";
+    installWindow(href);
+    window.localStorage.setItem("remoteos.controlPlaneBaseUrl", "javascript:alert('pwned')");
+
+    expect(resolveControlPlaneBaseUrl()).toBe(expectedConfiguredBaseUrl(href));
+    expect(window.localStorage.getItem("remoteos.controlPlaneBaseUrl")).toBe(expectedConfiguredBaseUrl(href));
   });
 
   it("retries pairing against the current host when the provided broker URL is unreachable", async () => {

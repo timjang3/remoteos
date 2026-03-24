@@ -370,8 +370,8 @@ export async function registerRoutes(
         const body = wsTicketBodySchema.parse(request.body);
 
         if (body.type === "host") {
-          const device = await store.getPersistedDevice(body.deviceId);
-          if (!device || device.deviceSecret !== body.deviceSecret || !device.userId) {
+          const device = await store.authenticateHostDevice(body.deviceId, body.deviceSecret);
+          if (!device || !device.userId) {
             return reply.code(401).send({
               error: "Unauthorized host"
             });

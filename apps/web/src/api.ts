@@ -95,6 +95,10 @@ function normalizeBaseUrl(value: string) {
   return value.replace(/\/$/, "");
 }
 
+function defaultControlPlaneBaseUrl() {
+  return "http://localhost:8787";
+}
+
 function getCurrentUrl() {
   if (typeof window === "undefined") {
     return new URL("http://localhost");
@@ -133,11 +137,97 @@ function rewriteLoopbackUrl(rawUrl: string) {
 
 function inferBaseUrlFromWindow() {
   if (typeof window === "undefined") {
-    return "http://localhost:8787";
+    return defaultControlPlaneBaseUrl();
   }
 
   const current = getCurrentUrl();
   return rewriteLoopbackUrl(`${current.protocol}//${current.hostname}:8787`);
+}
+
+function canUseLoopbackControlPlaneOverride(current = getCurrentUrl()) {
+  return Boolean(import.meta.env.DEV) || isLoopbackHost(current.hostname);
+}
+
+function normalizeControlPlaneBaseUrlCandidate(rawUrl: string, current = getCurrentUrl()) {
+  try {
+    const url = new URL(rawUrl, current.href);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    return normalizeBaseUrl(rewriteLoopbackUrl(url.toString()));
+  } catch {
+    return null;
+  }
+}
+
+function configuredControlPlaneBaseUrls(current = getCurrentUrl()) {
+  const candidates = new Set<string>([inferBaseUrlFromWindow()]);
+  const envBaseUrl = import.meta.env.VITE_REMOTEOS_HTTP_BASE_URL;
+  if (envBaseUrl) {
+    const normalized = normalizeControlPlaneBaseUrlCandidate(envBaseUrl, current);
+    if (normalized) {
+      candidates.add(normalized);
+    }
+  }
+
+  return candidates;
+}
+
+function resolveLoopbackOverrideBaseUrl(rawUrl: string, current = getCurrentUrl()) {
+  if (!canUseLoopbackControlPlaneOverride(current)) {
+    return null;
+  }
+
+  const normalized = normalizeControlPlaneBaseUrlCandidate(rawUrl, current);
+  if (!normalized) {
+    return null;
+  }
+
+  const target = new URL(normalized, current.href);
+  return isLoopbackHost(target.hostname) ? normalized : null;
+}
+
+function resolveStoredControlPlaneBaseUrl() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const current = getCurrentUrl();
+  const stored = window.localStorage.getItem(apiBaseUrlStorageKey);
+  if (!stored) {
+    return null;
+  }
+
+  const localOverride = resolveLoopbackOverrideBaseUrl(stored, current);
+  if (localOverride) {
+    return localOverride;
+  }
+
+  const normalized = normalizeControlPlaneBaseUrlCandidate(stored, current);
+  if (!normalized || !configuredControlPlaneBaseUrls(current).has(normalized)) {
+    window.localStorage.removeItem(apiBaseUrlStorageKey);
+    return null;
+  }
+
+  return normalized;
+}
+
+function resolveConfiguredControlPlaneBaseUrl() {
+  if (typeof window === "undefined") {
+    const envBaseUrl = import.meta.env.VITE_REMOTEOS_HTTP_BASE_URL;
+    return envBaseUrl ? normalizeBaseUrl(envBaseUrl) : defaultControlPlaneBaseUrl();
+  }
+
+  const current = getCurrentUrl();
+  const envBaseUrl = import.meta.env.VITE_REMOTEOS_HTTP_BASE_URL;
+  if (envBaseUrl) {
+    const normalized = normalizeControlPlaneBaseUrlCandidate(envBaseUrl, current);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return inferBaseUrlFromWindow();
 }
 
 function bindUrlToCurrentHost(rawUrl: string) {
@@ -237,32 +327,27 @@ export function getResolvedControlPlaneAuthMode() {
 
 export function resolveControlPlaneBaseUrl() {
   if (typeof window === "undefined") {
-    return "http://localhost:8787";
+    return resolveConfiguredControlPlaneBaseUrl();
   }
 
   const current = getCurrentUrl();
   const apiQuery = current.searchParams.get("api");
   if (apiQuery) {
-    const resolved = rewriteLoopbackUrl(new URL(apiQuery, current.href).toString());
-    window.localStorage.setItem(apiBaseUrlStorageKey, resolved);
-    return resolved;
+    const resolved = resolveLoopbackOverrideBaseUrl(apiQuery, current);
+    if (resolved) {
+      window.localStorage.setItem(apiBaseUrlStorageKey, resolved);
+      return resolved;
+    }
   }
 
-  const stored = window.localStorage.getItem(apiBaseUrlStorageKey);
+  const stored = resolveStoredControlPlaneBaseUrl();
   if (stored) {
-    return rewriteLoopbackUrl(stored);
+    return stored;
   }
 
-  const envBaseUrl = import.meta.env.VITE_REMOTEOS_HTTP_BASE_URL;
-  if (envBaseUrl) {
-    const resolved = rewriteLoopbackUrl(envBaseUrl);
-    window.localStorage.setItem(apiBaseUrlStorageKey, resolved);
-    return resolved;
-  }
-
-  const inferred = inferBaseUrlFromWindow();
-  window.localStorage.setItem(apiBaseUrlStorageKey, inferred);
-  return inferred;
+  const configured = resolveConfiguredControlPlaneBaseUrl();
+  window.localStorage.setItem(apiBaseUrlStorageKey, configured);
+  return configured;
 }
 
 export function storeControlPlaneBaseUrl(baseUrl: string) {
@@ -270,7 +355,20 @@ export function storeControlPlaneBaseUrl(baseUrl: string) {
     return;
   }
 
-  window.localStorage.setItem(apiBaseUrlStorageKey, rewriteLoopbackUrl(baseUrl));
+  const current = getCurrentUrl();
+  const localOverride = resolveLoopbackOverrideBaseUrl(baseUrl, current);
+  if (localOverride) {
+    window.localStorage.setItem(apiBaseUrlStorageKey, localOverride);
+    return;
+  }
+
+  const normalized = normalizeControlPlaneBaseUrlCandidate(baseUrl, current);
+  if (normalized && configuredControlPlaneBaseUrls(current).has(normalized)) {
+    window.localStorage.setItem(apiBaseUrlStorageKey, normalized);
+    return;
+  }
+
+  window.localStorage.removeItem(apiBaseUrlStorageKey);
 }
 
 export function resolveBrokerWebSocketUrl(wsUrl: string) {

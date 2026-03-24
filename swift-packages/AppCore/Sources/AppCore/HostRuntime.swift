@@ -1181,7 +1181,7 @@ public final class HostRuntime: ObservableObject {
     private func startAgentTurn(prompt: String, requestID: String) async {
         let clock = ContinuousClock()
         let startedAt = clock.now
-        log.notice("Broker requested agent turn start requestId=\(requestID) selectedWindowId=\(selectedWindowID.map(String.init) ?? "nil") promptPreview=\"\(logPreview(prompt, limit: 100))\"")
+        log.notice("Broker requested agent turn start requestId=\(requestID) selectedWindowId=\(selectedWindowID.map(String.init) ?? "nil")")
         do {
             let turn = try await codexClient.startTurn(prompt: prompt, targetWindowID: selectedWindowID)
             agentTurn = turn
@@ -1957,7 +1957,7 @@ public final class HostRuntime: ObservableObject {
     }
 
     private func handleCodexTraceCallback(_ event: TraceEventPayload) {
-        log.debug("Codex trace callback kind=\(event.kind) level=\(event.level) taskId=\(event.taskId ?? "nil") message=\(logPreview(event.message, limit: 160))")
+        log.debug("Codex trace callback kind=\(event.kind) level=\(event.level) taskId=\(event.taskId ?? "nil")")
         traces.insert(event, at: 0)
         traces = Array(traces.prefix(40))
 

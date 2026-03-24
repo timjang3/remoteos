@@ -35,7 +35,6 @@ struct AppLogger: Sendable {
     }
 
     private static let subsystem = "com.remoteos.host"
-    private static let mirrorQueue = DispatchQueue(label: "remoteos.logging.stderr")
     let category: String
     private let logger: Logger
 
@@ -65,15 +64,7 @@ struct AppLogger: Sendable {
     }
 
     private func emit(_ level: Level, _ message: String) {
-        logger.log(level: level.osLogType, "\(message, privacy: .public)")
-        Self.mirrorQueue.async {
-            let timestamp = Date().ISO8601Format()
-            let line = "[\(timestamp)] [\(level.rawValue)] [\(self.category)] \(message)\n"
-            guard let data = line.data(using: .utf8) else {
-                return
-            }
-            FileHandle.standardError.write(data)
-        }
+        logger.log(level: level.osLogType, "\(message, privacy: .private)")
     }
 }
 
@@ -81,14 +72,4 @@ func logDuration(_ duration: Duration) -> String {
     let components = duration.components
     let milliseconds = Double(components.seconds) * 1_000 + Double(components.attoseconds) / 1_000_000_000_000_000
     return String(format: "%.1fms", milliseconds)
-}
-
-func logPreview(_ text: String, limit: Int = 120) -> String {
-    let normalized = text.replacingOccurrences(of: "\n", with: " ")
-        .replacingOccurrences(of: "\r", with: " ")
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard normalized.count > limit else {
-        return normalized
-    }
-    return "\(normalized.prefix(limit))..."
 }

@@ -23,11 +23,13 @@ import { WsTicketStore } from "./wsTicketStore.js";
 const config = loadConfig();
 const app = Fastify({
   logger: true,
-  trustProxy: config.authMode === "required"
+  trustProxy: config.trustProxy
 });
 const wsTickets = new WsTicketStore();
 const db = config.databaseUrl ? createDb(config.databaseUrl) : null;
-const store = db ? new PostgresBrokerStore(db, config.publicPairBaseUrl) : new MemoryBrokerStore();
+const store = db
+  ? new PostgresBrokerStore(db, config.publicPairBaseUrl, config.tokenHashSecret!)
+  : new MemoryBrokerStore();
 const auth = config.authMode === "required" && db ? createAuth(db, config) : null;
 const authMiddleware = auth ? requireAuth(auth) : undefined;
 const speechProvider = createSpeechTranscriptionProvider(config);

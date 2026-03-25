@@ -19,6 +19,7 @@ ARCHS="${REMOTEOS_ARCHS:-}"
 ICON_FILE="${REMOTEOS_ICON_FILE:-}"
 
 SIGNING_IDENTITY="${REMOTEOS_SIGNING_IDENTITY:-}"
+AUTO_DETECTED_SIGNING_IDENTITY=0
 NOTARY_PROFILE="${REMOTEOS_NOTARY_PROFILE:-}"
 APPLE_ID="${REMOTEOS_NOTARY_APPLE_ID:-${APPLE_ID:-}}"
 APPLE_PASSWORD="${REMOTEOS_NOTARY_APPLE_PASSWORD:-${APPLE_APP_SPECIFIC_PASSWORD:-}}"
@@ -34,6 +35,33 @@ function require_command() {
         echo "Missing required command: $1" >&2
         exit 1
     fi
+}
+
+function detect_signing_identity() {
+    typeset -a identities preferred_fragments
+    local line=""
+    local identity_name=""
+
+    identities=("${(@f)$(security find-identity -v -p codesigning 2>/dev/null)}")
+    preferred_fragments=(
+        "RemoteOS Local Code Signing"
+        "Developer ID Application:"
+        "Apple Development:"
+    )
+
+    for fragment in "${preferred_fragments[@]}"; do
+        for line in "${identities[@]}"; do
+            [[ "$line" == *\"* ]] || continue
+            identity_name="${line#*\"}"
+            identity_name="${identity_name%%\"*}"
+            if [[ -n "$identity_name" && "$identity_name" == *"$fragment"* ]]; then
+                print -- "$identity_name"
+                return 0
+            fi
+        done
+    done
+
+    return 0
 }
 
 function notarize_file() {
@@ -64,6 +92,14 @@ require_command codesign
 require_command xcrun
 require_command shasum
 require_command iconutil
+require_command security
+
+if [[ -z "$SIGNING_IDENTITY" ]]; then
+    SIGNING_IDENTITY="$(detect_signing_identity)"
+    if [[ -n "$SIGNING_IDENTITY" ]]; then
+        AUTO_DETECTED_SIGNING_IDENTITY=1
+    fi
+fi
 
 if [[ -z "$BASE_URL" ]]; then
     echo "REMOTEOS_CONTROL_PLANE_BASE_URL is required for hosted packaging." >&2
@@ -171,10 +207,20 @@ if [[ -n "$ICON_FILE" ]]; then
 fi
 
 if [[ -n "$SIGNING_IDENTITY" ]]; then
-    echo "Signing app with Developer ID identity..."
-    codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$APP_ROOT"
+    if [[ "$SIGNING_IDENTITY" == Developer\ ID\ Application:* ]]; then
+        echo "Signing app with Developer ID identity..."
+        codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$APP_ROOT"
+    else
+        if [[ "$AUTO_DETECTED_SIGNING_IDENTITY" == "1" ]]; then
+            echo "Signing app with auto-detected local identity: $SIGNING_IDENTITY"
+        else
+            echo "Signing app with identity: $SIGNING_IDENTITY"
+        fi
+        codesign --force --sign "$SIGNING_IDENTITY" "$APP_ROOT"
+    fi
 else
     echo "No signing identity provided. Applying ad-hoc signing for local verification only."
+    echo "Warning: ad-hoc signing changes the app's code requirement on rebuilds, so macOS may invalidate Accessibility and Screen Recording grants after each packaged build."
     codesign --force --sign - "$APP_ROOT"
 fi
 

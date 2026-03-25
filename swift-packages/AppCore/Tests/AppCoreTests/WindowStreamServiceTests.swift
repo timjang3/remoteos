@@ -22,3 +22,15 @@ import Testing
         #expect(configuration.ignoreShadowsSingleWindow == true)
     }
 }
+
+@Test func displayRegionTranslatesWindowIntoDisplayCoordinates() {
+    let region = WindowStreamService.displayRegion(
+        windowRect: CGRect(x: 320, y: 240, width: 960, height: 600),
+        displayFrame: CGRect(x: 100, y: 200, width: 1600, height: 900)
+    )
+
+    #expect(region.origin.x == 220)
+    #expect(region.origin.y == 40)
+    #expect(region.width == 960)
+    #expect(region.height == 600)
+}

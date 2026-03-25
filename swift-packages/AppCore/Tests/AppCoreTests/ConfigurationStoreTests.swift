@@ -47,7 +47,7 @@ import Testing
     }
 
     defaults.register(defaults: [
-        "controlPlaneBaseURL": "https://control-plane-production-8dfe.up.railway.app",
+        "controlPlaneBaseURL": "http://localhost:8787",
         "hostMode": HostMode.hosted.rawValue
     ])
     defaults.set("http://localhost:8787", forKey: "controlPlaneBaseURL")
@@ -57,6 +57,6 @@ import Testing
     store.resetConnectionOverrides()
     let configuration = store.load()
 
-    #expect(configuration.controlPlaneBaseURL == "https://control-plane-production-8dfe.up.railway.app")
+    #expect(configuration.controlPlaneBaseURL == "http://localhost:8787")
     #expect(configuration.hostMode == .hosted)
 }

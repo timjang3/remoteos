@@ -762,6 +762,7 @@ export function App() {
     snapshotUrlsRef.current = next;
     return next;
   }, [snapshots]);
+  const selectedSnapshotUrl = selectedWindow ? (snapshotUrls[selectedWindow.id] ?? null) : null;
 
   const transcript = useMemo(
     () => buildDisplayedTranscript(agentItems, pendingAgentSend),
@@ -1260,7 +1261,12 @@ export function App() {
   }
 
   async function handleSelectWindow(windowId: number) {
-    if (!clientRef.current) return;
+    const client = clientRef.current;
+    if (!client) return;
+    const previousSelectedWindowId = selectedWindowId;
+    const previousFrame = frame;
+    const previousShowHomeState = showHomeStateRef.current;
+
     showHomeStateRef.current = false;
     setShowHomeState(false);
     setSelectedWindowId(windowId);
@@ -1271,8 +1277,25 @@ export function App() {
     setAgentPrompts([]);
     setPendingAgentSend(null);
     setSubmittingPromptIds(new Set());
-    await clientRef.current.resetAgentThread();
-    await clientRef.current.selectWindow(windowId);
+    setChatError(null);
+
+    try {
+      await client.selectWindow(windowId);
+    } catch (err) {
+      showHomeStateRef.current = previousShowHomeState;
+      setShowHomeState(previousShowHomeState);
+      setSelectedWindowId(previousSelectedWindowId);
+      setFrame(previousFrame);
+      setChatError(err instanceof Error ? err.message : "Failed to select window");
+      return;
+    }
+
+    try {
+      await client.resetAgentThread();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to reset Codex thread";
+      setChatError(`Window selected, but couldn't reset the Codex thread: ${message}`);
+    }
   }
 
   async function handleDeselectWindow() {
@@ -1352,13 +1375,19 @@ export function App() {
   }
 
   async function handleResetThread() {
-    if (!clientRef.current) return;
+    const client = clientRef.current;
+    if (!client) return;
     setAgentItems([]);
     setAgentTurn(null);
     setAgentPrompts([]);
     setPendingAgentSend(null);
     setSubmittingPromptIds(new Set());
-    await clientRef.current.resetAgentThread();
+    setChatError(null);
+    try {
+      await client.resetAgentThread();
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : "Failed to reset agent");
+    }
   }
 
   async function handleAgentPromptResponse(
@@ -1508,9 +1537,9 @@ export function App() {
           </div>
         </div>
 
-        {selectedWindow && frameUrl ? (
+        {selectedWindow && (frameUrl || selectedSnapshotUrl) ? (
           <div className="window-preview">
-            <img src={frameUrl} alt={selectedWindow.title} draggable={false} />
+            <img src={frameUrl ?? selectedSnapshotUrl ?? undefined} alt={selectedWindow.title} draggable={false} />
             <button
               className="window-preview-close"
               onClick={() => void handleDeselectWindow()}

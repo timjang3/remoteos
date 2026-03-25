@@ -81,4 +81,27 @@ describe("socketSendQueue", () => {
 
     clearSocketQueue(socket);
   });
+
+  it("lets a fresh live frame replace a queued snapshot", async () => {
+    const socket = new FakeSocket();
+
+    queueSocketFrame(socket, { method: "window.snapshot", params: { id: 1 } });
+    queueSocketFrame(socket, { method: "window.snapshot", params: { id: 2 } });
+    queueSocketFrame(socket, { method: "window.frame", params: { id: 3 } });
+    await flushMicrotasks();
+
+    expect(socket.sent).toEqual([
+      JSON.stringify({ method: "window.snapshot", params: { id: 1 } })
+    ]);
+
+    socket.completeNextSend();
+    await flushMicrotasks();
+
+    expect(socket.sent).toEqual([
+      JSON.stringify({ method: "window.snapshot", params: { id: 1 } }),
+      JSON.stringify({ method: "window.frame", params: { id: 3 } })
+    ]);
+
+    clearSocketQueue(socket);
+  });
 });

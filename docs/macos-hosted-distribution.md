@@ -38,6 +38,8 @@ Artifacts land in `dist/macos-hosted/`:
 - `REMOTEOS_SIGNING_IDENTITY`
   - Optional for local verification.
   - Required for public distribution.
+  - If omitted, the packaging script will auto-select a stable local signing identity when one is available.
+  - If the script falls back to ad-hoc signing, macOS permissions like Accessibility and Screen Recording can be invalidated on every rebuild.
 - `REMOTEOS_NOTARY_PROFILE` or `REMOTEOS_NOTARY_APPLE_ID` + `REMOTEOS_NOTARY_APPLE_PASSWORD` + `REMOTEOS_NOTARY_TEAM_ID`
   - Optional for local verification.
   - Required for public distribution.

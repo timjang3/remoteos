@@ -8,6 +8,15 @@ Run it locally with:
 swift run --package-path apps/macos
 ```
 
+Build the downloadable hosted app with:
+
+```bash
+REMOTEOS_CONTROL_PLANE_BASE_URL=https://your-hosted-control-plane.example.com \
+apps/macos/scripts/package_hosted_app.sh
+```
+
+That packaged `.app` / `.dmg` flow is for the hosted product. The `swift run` flow remains the open-source and local-development path.
+
 Default connection settings are bundled in
 `Sources/RemoteOSHost/Resources/DefaultConfiguration.plist`.
 Editing that file changes the app-wide default control-plane target and mode.

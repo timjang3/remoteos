@@ -7,6 +7,9 @@ private struct DeckSnapshotFailureState {
     var lastLoggedAt: Date
 }
 
+private let hostRuntimeDefaultReconnectDelay: Duration = .seconds(2)
+private let hostRuntimeDefaultRateLimitReconnectDelay: Duration = .seconds(60)
+
 public enum OpenAIAPIKeyStorageSource: String, Sendable {
     case none
     case saved
@@ -31,7 +34,7 @@ public final class HostRuntime: ObservableObject {
     @Published public private(set) var openAIAPIKeyStorageSource: OpenAIAPIKeyStorageSource = .none
 
     private let configurationStore: ConfigurationStore
-    private let keychainTokenStore: KeychainTokenStore
+    private let deviceSecretStore: DeviceSecretStore
     private let openAIAPIKeyStore: OpenAIAPIKeyStore
     private let permissionCoordinator: PermissionCoordinator
     private let inventoryService: WindowInventoryService
@@ -72,7 +75,7 @@ public final class HostRuntime: ObservableObject {
 
     public init(
         configurationStore: ConfigurationStore = ConfigurationStore(),
-        keychainTokenStore: KeychainTokenStore = KeychainTokenStore(),
+        deviceSecretStore: DeviceSecretStore = DeviceSecretStore(),
         openAIAPIKeyStore: OpenAIAPIKeyStore = OpenAIAPIKeyStore(),
         permissionCoordinator: PermissionCoordinator = PermissionCoordinator(),
         screenshotService: ScreenshotService = ScreenshotService(),
@@ -84,9 +87,20 @@ public final class HostRuntime: ObservableObject {
         urlSession: URLSession = .shared
     ) throws {
         var configuration = configurationStore.load()
-        configuration.deviceSecret = keychainTokenStore.load(.deviceSecret)
+        let trimmedDeviceID = configuration.deviceID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        var deviceSecret = deviceSecretStore.load()?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmedDeviceID == nil || trimmedDeviceID?.isEmpty == true {
+            if let existingDeviceSecret = deviceSecret, !existingDeviceSecret.isEmpty {
+                deviceSecretStore.clear()
+                deviceSecret = nil
+            }
+            configuration.deviceID = nil
+        }
+
+        configuration.deviceSecret = deviceSecret
         self.configurationStore = configurationStore
-        self.keychainTokenStore = keychainTokenStore
+        self.deviceSecretStore = deviceSecretStore
         self.openAIAPIKeyStore = openAIAPIKeyStore
         self.permissionCoordinator = permissionCoordinator
         self.inventoryService = WindowInventoryService(permissionCoordinator: permissionCoordinator)
@@ -260,11 +274,6 @@ public final class HostRuntime: ObservableObject {
         lastConnectionError = nil
 
         Task {
-            self.log.info("Beginning Codex warm-up")
-            _ = await codexClient.prepareForTurns(forceStatusRefresh: true)
-            self.log.info("Finished Codex warm-up")
-        }
-        Task {
             try? await refreshControlPlaneAuthMode()
         }
         log.info("Starting window inventory refresh loop.")
@@ -328,9 +337,6 @@ public final class HostRuntime: ObservableObject {
             scheduleBrokerReconnect(after: .zero)
         }
 
-        Task {
-            _ = await codexClient.prepareForTurns(forceStatusRefresh: true)
-        }
         Task {
             try? await refreshControlPlaneAuthMode()
         }
@@ -413,6 +419,12 @@ public final class HostRuntime: ObservableObject {
 
         NSWorkspace.shared.open(url)
         lastOpenedEnrollmentToken = pendingEnrollment.token
+    }
+
+    public func refreshCodexStatus() {
+        Task {
+            _ = await codexClient.prepareForTurns(forceStatusRefresh: true)
+        }
     }
 
     public func createPairingSession() {
@@ -508,7 +520,7 @@ public final class HostRuntime: ObservableObject {
                     self.lastConnectionError = error.localizedDescription
                     self.log.error("Broker reconnect failed error=\(error.localizedDescription)")
                     await self.recordTrace(level: "error", kind: "broker_connect", message: error.localizedDescription)
-                    nextDelay = .seconds(2)
+                    nextDelay = Self.reconnectDelay(for: error)
                 }
             }
         }
@@ -572,9 +584,24 @@ public final class HostRuntime: ObservableObject {
         return expirationDate <= now
     }
 
+    nonisolated static func reconnectDelay(for error: Error) -> Duration {
+        if case let AppCoreError.rateLimited(_, retryAfter) = error {
+            return retryAfter ?? hostRuntimeDefaultRateLimitReconnectDelay
+        }
+        return hostRuntimeDefaultReconnectDelay
+    }
+
     private func persistConfiguration() {
         configurationStore.save(configuration)
-        keychainTokenStore.save(configuration.deviceSecret, for: .deviceSecret)
+        deviceSecretStore.save(configuration.deviceSecret)
+    }
+
+    private func clearPartialStoredDeviceRegistration(reason: String) {
+        log.warning("Clearing partial stored device registration reason=\(reason)")
+        configuration.deviceID = nil
+        configuration.deviceSecret = nil
+        persistConfiguration()
+        hostStatus.deviceId = "unregistered"
     }
 
     private func clearStoredDeviceRegistration(logMessage: String) {
@@ -623,10 +650,6 @@ public final class HostRuntime: ObservableObject {
         )
         pairingSession = nil
         hostStatus.online = false
-        if lastOpenedEnrollmentToken != enrollmentToken, let url = URL(string: enrollmentUrl) {
-            NSWorkspace.shared.open(url)
-            lastOpenedEnrollmentToken = enrollmentToken
-        }
         startEnrollmentPolling(token: enrollmentToken)
     }
 
@@ -676,11 +699,17 @@ public final class HostRuntime: ObservableObject {
         let clock = ContinuousClock()
         let startedAt = clock.now
         log.info("Registering device baseUrl=\(configuration.controlPlaneBaseURL) existingDeviceId=\(configuration.deviceID ?? "nil")")
-        let registrationTask = Task<BrokerRegistration, Error> { [self, urlSession] in
-            let request = try await makeRegisterRequest()
-            let (data, response) = try await urlSession.data(for: request)
-            try Self.assertSuccessfulHTTPResponse(data: data, response: response)
-            return try JSONDecoder().decode(BrokerRegistration.self, from: data)
+        let registrationTask = Task<BrokerRegistration, Error> { @MainActor [self, urlSession] in
+            do {
+                return try await performDeviceRegistrationRequest(using: urlSession)
+            } catch {
+                guard shouldRetryFreshRegistration(after: error) else {
+                    throw error
+                }
+
+                clearPartialStoredDeviceRegistration(reason: "unauthorized_existing_registration")
+                return try await performDeviceRegistrationRequest(using: urlSession)
+            }
         }
         self.registrationTask = registrationTask
         defer {
@@ -697,6 +726,13 @@ public final class HostRuntime: ObservableObject {
         return registration
     }
 
+    private func performDeviceRegistrationRequest(using urlSession: URLSession) async throws -> BrokerRegistration {
+        let request = try await makeRegisterRequest()
+        let (data, response) = try await urlSession.data(for: request)
+        try Self.assertSuccessfulHTTPResponse(data: data, response: response)
+        return try JSONDecoder().decode(BrokerRegistration.self, from: data)
+    }
+
     private func makeRegisterRequest() async throws -> URLRequest {
         var body: [String: Any] = [
             "name": configuration.deviceName,
@@ -707,15 +743,20 @@ public final class HostRuntime: ObservableObject {
 
         if let existingDeviceID, !existingDeviceID.isEmpty {
             guard let existingDeviceSecret, !existingDeviceSecret.isEmpty else {
-                throw AppCoreError.missingConfiguration(
-                    "Stored device registration is incomplete. RemoteOS will not create a replacement device automatically; clear the saved registration and pair this Mac again."
+                clearPartialStoredDeviceRegistration(
+                    reason: "device_id_without_secret"
                 )
+                var request = URLRequest(url: URL(string: "\(configuration.controlPlaneBaseURL)/devices/register")!)
+                request.httpMethod = "POST"
+                request.addValue("application/json", forHTTPHeaderField: "content-type")
+                request.httpBody = try dataFromJSONObject(body)
+                return request
             }
             body["existingDeviceId"] = existingDeviceID
             body["existingDeviceSecret"] = existingDeviceSecret
         } else if let existingDeviceSecret, !existingDeviceSecret.isEmpty {
-            throw AppCoreError.missingConfiguration(
-                "Stored device secret exists without a device ID. Clear the saved registration and pair this Mac again."
+            clearPartialStoredDeviceRegistration(
+                reason: "device_secret_without_id"
             )
         }
         var request = URLRequest(url: URL(string: "\(configuration.controlPlaneBaseURL)/devices/register")!)
@@ -723,6 +764,18 @@ public final class HostRuntime: ObservableObject {
         request.addValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try dataFromJSONObject(body)
         return request
+    }
+
+    private func shouldRetryFreshRegistration(after error: Error) -> Bool {
+        guard case let AppCoreError.invalidPayload(message) = error,
+              message.localizedCaseInsensitiveContains("Unauthorized device")
+        else {
+            return false
+        }
+
+        let existingDeviceID = configuration.deviceID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let existingDeviceSecret = configuration.deviceSecret?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !existingDeviceID.isEmpty || !existingDeviceSecret.isEmpty
     }
 
     private func connectBroker(wsURLString: String) async throws {
@@ -826,10 +879,59 @@ public final class HostRuntime: ObservableObject {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AppCoreError.invalidResponse
         }
+        if httpResponse.statusCode == 429 {
+            let message = (try? anyDictionary(from: data)["error"] as? String) ?? "Too many requests"
+            throw AppCoreError.rateLimited(
+                Self.rateLimitErrorMessage(message, response: httpResponse),
+                retryAfter: Self.retryAfterDuration(from: httpResponse)
+            )
+        }
         guard (200 ..< 300).contains(httpResponse.statusCode) else {
             let message = (try? anyDictionary(from: data)["error"] as? String) ?? "HTTP \(httpResponse.statusCode)"
             throw AppCoreError.invalidPayload(message)
         }
+    }
+
+    private static func retryAfterDuration(from response: HTTPURLResponse) -> Duration? {
+        guard let value = response.value(forHTTPHeaderField: "Retry-After")?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
+        }
+
+        if let seconds = TimeInterval(value), seconds > 0 {
+            return .milliseconds(Int64((seconds * 1000).rounded()))
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss z"
+        guard let retryDate = formatter.date(from: value) else {
+            return nil
+        }
+
+        let interval = retryDate.timeIntervalSinceNow
+        guard interval > 0 else {
+            return .zero
+        }
+        return .milliseconds(Int64((interval * 1000).rounded()))
+    }
+
+    private static func rateLimitErrorMessage(_ message: String, response: HTTPURLResponse) -> String {
+        guard let retryAfter = retryAfterDuration(from: response), retryAfter > .zero else {
+            return message
+        }
+
+        let seconds = max(
+            1,
+            Int(
+                (
+                    Double(retryAfter.components.seconds)
+                    + Double(retryAfter.components.attoseconds) / 1_000_000_000_000_000_000
+                ).rounded(.up)
+            )
+        )
+        return "\(message). Retrying in about \(seconds)s."
     }
 
     private func refreshWindowsNow() async {
@@ -953,12 +1055,43 @@ public final class HostRuntime: ObservableObject {
         await brokerClient.sendNotification(method: "semantic.diff", payload: diff)
     }
 
-    private func startFrameStream(for windowID: Int) async throws {
-        guard windows.contains(where: { $0.id == windowID }) else {
-            throw AppCoreError.missingWindow
+    private func publishImmediateFrame(
+        for windowID: Int,
+        reason: String,
+        preferCachedFrame: Bool
+    ) async {
+        if preferCachedFrame, let cachedFrame = latestFrameByWindowID[windowID] {
+            enqueueStreamFrame(cachedFrame)
+            return
         }
 
-        try await windowStreamService.start(windowID: windowID, topologyVersion: displayTopologyVersion)
+        do {
+            let frame = try await captureAndStoreFrame(windowID: windowID, reason: reason)
+            enqueueStreamFrame(frame)
+        } catch {
+            await recordTrace(
+                level: "warning",
+                kind: "frame_stream",
+                message: "Failed to publish immediate frame for window \(windowID): \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func startFrameStream(for windowID: Int) async throws {
+        guard let window = windows.first(where: { $0.id == windowID }) else {
+            throw AppCoreError.missingWindow
+        }
+        let windowBounds = accessibilityService.windowBounds(for: window) ?? window.bounds.asCGRect
+        try await windowStreamService.start(
+            windowID: windowID,
+            topologyVersion: displayTopologyVersion,
+            windowBounds: windowBounds
+        )
+        await publishImmediateFrame(
+            for: windowID,
+            reason: "stream_initial_frame",
+            preferCachedFrame: false
+        )
     }
 
     private func captureAndStoreFrame(windowID: Int, reason: String = "frame_capture") async throws -> CapturedFrame {
@@ -1051,13 +1184,9 @@ public final class HostRuntime: ObservableObject {
                 guard windows.contains(where: { $0.id == windowId }) else {
                     throw AppCoreError.missingWindow
                 }
+                try await startFrameStream(for: windowId)
                 selectedWindowID = windowId
                 hostStatus.selectedWindowId = windowId
-                do {
-                    try await startFrameStream(for: windowId)
-                } catch {
-                    await recordTrace(level: "warning", kind: "frame_stream", message: error.localizedDescription)
-                }
                 await brokerClient.sendSuccess(id: request.id ?? UUID().uuidString, payload: ["ok": true])
                 await publishHostStatus()
             } catch {
@@ -1109,6 +1238,14 @@ public final class HostRuntime: ObservableObject {
         case "host.state.sync":
             await brokerClient.sendNotification(method: "windows.updated", payload: ["windows": windows])
             await publishHostStatus()
+            await publishDeckSnapshots()
+            if let selectedWindowID {
+                await publishImmediateFrame(
+                    for: selectedWindowID,
+                    reason: "stream_sync_frame",
+                    preferCachedFrame: true
+                )
+            }
             if let requestID = request.id {
                 await brokerClient.sendSuccess(id: requestID, payload: ["ok": true])
             }
@@ -1159,9 +1296,6 @@ public final class HostRuntime: ObservableObject {
             configuration.codexModel = modelId
             persistConfiguration()
             await brokerClient.sendSuccess(id: request.id ?? UUID().uuidString, payload: ["ok": true])
-            Task {
-                _ = await codexClient.prepareForTurns(forceStatusRefresh: true)
-            }
         case "agent.state.get":
             let result = AgentStateGetResultPayload(
                 turn: agentTurn,

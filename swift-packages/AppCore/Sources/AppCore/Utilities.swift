@@ -6,6 +6,7 @@ public enum AppCoreError: Error, LocalizedError {
     case missingWindow
     case missingDisplay
     case invalidPayload(String)
+    case rateLimited(String, retryAfter: Duration?)
     case missingConfiguration(String)
     case transportUnavailable
     case staleFrame
@@ -21,6 +22,8 @@ public enum AppCoreError: Error, LocalizedError {
         case .missingDisplay:
             return "No display is available for capture."
         case let .invalidPayload(message):
+            return message
+        case let .rateLimited(message, _):
             return message
         case let .missingConfiguration(message):
             return message
@@ -59,6 +62,15 @@ public extension CGRect {
 }
 
 extension WindowBounds {
+    var asCGRect: CGRect {
+        CGRect(
+            x: x,
+            y: y,
+            width: width,
+            height: height
+        )
+    }
+
     var logDescription: String {
         "x=\(Int(x.rounded())) y=\(Int(y.rounded())) width=\(Int(width.rounded())) height=\(Int(height.rounded()))"
     }

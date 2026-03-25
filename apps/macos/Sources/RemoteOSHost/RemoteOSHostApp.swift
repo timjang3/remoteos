@@ -699,9 +699,12 @@ struct SettingsView: View {
 
             Section("Codex") {
                 TextField("Codex model", text: $codexModel)
-                Text("RemoteOS uses the locally installed `codex` CLI and its current login state.")
+                Text("RemoteOS uses the locally installed `codex` CLI and checks it on first use or when you explicitly refresh it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button("Check Codex now") {
+                    runtime.refreshCodexStatus()
+                }
                 HStack {
                     Text("Runtime state")
                     Spacer()

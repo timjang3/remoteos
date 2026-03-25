@@ -1,3 +1,4 @@
+import AppKit
 import CoreImage
 import CoreMedia
 import CoreVideo
@@ -10,6 +11,7 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
     public var onFrame: (@Sendable (CapturedFrame) async -> Void)?
     public var onError: (@Sendable (Error) async -> Void)?
 
+    private let log = AppLogs.screenshot
     private let outputQueue = DispatchQueue(label: "remoteos.window-stream.output")
     private let imageContext = CIContext()
 
@@ -24,19 +26,58 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
         super.init()
     }
 
-    public func start(windowID: Int, topologyVersion: Int) async throws {
+    public func start(windowID: Int, topologyVersion: Int, windowBounds: CGRect? = nil) async throws {
         try await stop()
 
         let content = try await SCShareableContent.current
         guard let window = content.windows.first(where: { Int($0.windowID) == windowID }) else {
             throw AppCoreError.missingWindow
         }
+        let preferredBounds = windowBounds ?? window.frame
 
+        do {
+            try await startSingleWindowCapture(
+                window: window,
+                preferredBounds: preferredBounds,
+                windowID: windowID,
+                topologyVersion: topologyVersion
+            )
+        } catch {
+            log.warning("Per-window stream capture failed for \(windowID), using display-region fallback: \(error.localizedDescription)")
+            try await startDisplayRegionCapture(
+                windowID: windowID,
+                topologyVersion: topologyVersion,
+                windowRect: preferredBounds,
+                displays: content.displays
+            )
+        }
+    }
+
+    public func stop() async throws {
+        guard let stream else {
+            return
+        }
+
+        self.stream = nil
+        currentWindowID = nil
+        try await stream.stopCapture()
+    }
+
+    private func startSingleWindowCapture(
+        window: SCWindow,
+        preferredBounds: CGRect,
+        windowID: Int,
+        topologyVersion: Int
+    ) async throws {
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let info = SCShareableContent.info(for: filter)
-        let sourceWidth = max(Int(window.frame.width * CGFloat(info.pointPixelScale)), 1)
-        let sourceHeight = max(Int(window.frame.height * CGFloat(info.pointPixelScale)), 1)
-        let configuration = Self.streamConfiguration(sourceWidth: sourceWidth, sourceHeight: sourceHeight)
+        let sourceWidth = max(Int(preferredBounds.width * CGFloat(info.pointPixelScale)), 1)
+        let sourceHeight = max(Int(preferredBounds.height * CGFloat(info.pointPixelScale)), 1)
+        let configuration = Self.streamConfiguration(
+            sourceWidth: sourceWidth,
+            sourceHeight: sourceHeight,
+            ignoreSingleWindowShadows: true
+        )
 
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: outputQueue)
@@ -56,14 +97,47 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
         }
     }
 
-    public func stop() async throws {
-        guard let stream else {
-            return
+    private func startDisplayRegionCapture(
+        windowID: Int,
+        topologyVersion: Int,
+        windowRect: CGRect,
+        displays: [SCDisplay]
+    ) async throws {
+        guard let display = displays.max(by: {
+            windowRect.intersection($0.frame).area
+                < windowRect.intersection($1.frame).area
+        }) else {
+            throw AppCoreError.invalidPayload("No display found for window region.")
         }
 
-        self.stream = nil
-        currentWindowID = nil
-        try await stream.stopCapture()
+        let pointPixelScale = Self.pointPixelScale(forDisplayID: CGDirectDisplayID(display.displayID))
+        let regionInDisplay = Self.displayRegion(windowRect: windowRect, displayFrame: display.frame)
+        let sourceWidth = max(Int(windowRect.width * CGFloat(pointPixelScale)), 1)
+        let sourceHeight = max(Int(windowRect.height * CGFloat(pointPixelScale)), 1)
+        let configuration = Self.streamConfiguration(
+            sourceWidth: sourceWidth,
+            sourceHeight: sourceHeight,
+            ignoreSingleWindowShadows: false
+        )
+        configuration.sourceRect = regionInDisplay
+
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
+        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: outputQueue)
+
+        currentWindowID = windowID
+        currentTopologyVersion = topologyVersion
+        fallbackSourceRect = windowRect
+        fallbackPointPixelScale = pointPixelScale
+        self.stream = stream
+
+        do {
+            try await stream.startCapture()
+        } catch {
+            self.stream = nil
+            currentWindowID = nil
+            throw error
+        }
     }
 
     private func makeCapturedFrame(from sampleBuffer: CMSampleBuffer) -> CapturedFrame? {
@@ -175,7 +249,11 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
         )
     }
 
-    static func streamConfiguration(sourceWidth: Int, sourceHeight: Int) -> SCStreamConfiguration {
+    static func streamConfiguration(
+        sourceWidth: Int,
+        sourceHeight: Int,
+        ignoreSingleWindowShadows: Bool = true
+    ) -> SCStreamConfiguration {
         let streamSize = streamPixelSize(
             width: sourceWidth,
             height: sourceHeight,
@@ -188,10 +266,28 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: 4)
         configuration.showsCursor = true
         configuration.capturesAudio = false
-        if #available(macOS 14.0, *) {
+        if #available(macOS 14.0, *), ignoreSingleWindowShadows {
             configuration.ignoreShadowsSingleWindow = true
         }
         return configuration
+    }
+
+    static func displayRegion(windowRect: CGRect, displayFrame: CGRect) -> CGRect {
+        CGRect(
+            x: windowRect.origin.x - displayFrame.origin.x,
+            y: windowRect.origin.y - displayFrame.origin.y,
+            width: windowRect.width,
+            height: windowRect.height
+        )
+    }
+
+    private static func pointPixelScale(forDisplayID displayID: CGDirectDisplayID) -> Double {
+        if let screen = NSScreen.screens.first(where: {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32) == displayID
+        }) {
+            return Double(screen.backingScaleFactor)
+        }
+        return 1.0
     }
 }
 

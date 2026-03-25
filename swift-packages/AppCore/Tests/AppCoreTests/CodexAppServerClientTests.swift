@@ -100,3 +100,88 @@ private actor CallbackOrderRecorder {
 
     #expect(decoded["id"] as? String == "tool-7")
 }
+
+@Test func cliCommandResolverAddsFallbackPATHForGUIApps() {
+    let environment = CLICommandResolver.environmentWithFallbackPATH(
+        environment: [
+            "HOME": "/Users/tester",
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"
+        ],
+        homeDirectory: "/Users/tester"
+    )
+
+    let pathEntries = Set((environment["PATH"] ?? "").split(separator: ":").map(String.init))
+    #expect(pathEntries.contains("/opt/homebrew/bin"))
+    #expect(pathEntries.contains("/usr/local/bin"))
+    #expect(pathEntries.contains("/Applications/Codex.app/Contents/Resources"))
+    #expect(pathEntries.contains("/Users/tester/.local/bin"))
+}
+
+@Test func cliCommandResolverFindsCodexOutsideMinimalPATH() throws {
+    let resolution = try CLICommandResolver.resolve(
+        arguments: ["codex", "app-server", "--listen", "stdio://"],
+        environment: [
+            "HOME": "/Users/tester",
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"
+        ],
+        homeDirectory: "/Users/tester",
+        isExecutableFile: { path in
+            path == "/Applications/Codex.app/Contents/Resources/codex"
+        }
+    )
+
+    #expect(resolution.executableURL.path == "/Applications/Codex.app/Contents/Resources/codex")
+    #expect(resolution.arguments == ["app-server", "--listen", "stdio://"])
+    #expect((resolution.environment["PATH"] ?? "").contains("/Applications/Codex.app/Contents/Resources"))
+}
+
+@Test func deviceSecretStoreUsesDefaultsWhenKeychainTrackingIsUnavailable() {
+    let suiteName = "DeviceSecretStoreDefaults-\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: suiteName) else {
+        Issue.record("Failed to create isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    let keychain = KeychainTokenStore(service: "DeviceSecretStoreDefaults-\(UUID().uuidString)")
+    let store = DeviceSecretStore(
+        keychainTokenStore: keychain,
+        defaults: defaults,
+        mode: .automatic,
+        canUseKeychainProvider: { false }
+    )
+
+    store.save("secret_defaults")
+
+    #expect(store.load() == "secret_defaults")
+    #expect(keychain.load(.deviceSecret, authenticationUI: .fail) == nil)
+}
+
+@Test func deviceSecretStoreDefaultsOnlyIgnoresKeychainSecretsUntilSaved() {
+    let suiteName = "DeviceSecretStoreDefaultsOnly-\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: suiteName) else {
+        Issue.record("Failed to create isolated defaults suite")
+        return
+    }
+    defer {
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    let keychain = KeychainTokenStore(service: "DeviceSecretStoreDefaultsOnly-\(UUID().uuidString)")
+    keychain.save("secret_keychain", for: .deviceSecret)
+    defer {
+        keychain.save(nil, for: .deviceSecret)
+    }
+
+    let store = DeviceSecretStore(
+        keychainTokenStore: keychain,
+        defaults: defaults,
+        mode: .defaultsOnly
+    )
+
+    #expect(store.load() == nil)
+    store.save("secret_defaults")
+    #expect(store.load() == "secret_defaults")
+}

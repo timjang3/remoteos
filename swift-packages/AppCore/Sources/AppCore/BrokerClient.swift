@@ -275,6 +275,11 @@ public final class BrokerClient: NSObject, @unchecked Sendable {
     }
 
     private static func isLowPriorityNotification(method: String) -> Bool {
-        method == "window.frame"
+        switch method {
+        case "window.frame", "window.snapshot":
+            return true
+        default:
+            return false
+        }
     }
 }

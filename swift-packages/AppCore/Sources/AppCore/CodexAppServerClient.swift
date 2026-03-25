@@ -1,5 +1,110 @@
 import Foundation
 
+struct CLICommandResolution {
+    let executableURL: URL
+    let arguments: [String]
+    let environment: [String: String]
+    let displayCommand: String
+}
+
+enum CLICommandResolver {
+    static func resolve(
+        arguments: [String],
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        homeDirectory: String = NSHomeDirectory(),
+        isExecutableFile: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
+    ) throws -> CLICommandResolution {
+        guard let executable = arguments.first, !executable.isEmpty else {
+            throw AppCoreError.codexUnavailable("Missing Codex command.")
+        }
+
+        let resolvedEnvironment = environmentWithFallbackPATH(
+            environment: environment,
+            homeDirectory: homeDirectory
+        )
+        let executablePath: String
+        if executable.contains("/") {
+            executablePath = (executable as NSString).expandingTildeInPath
+            guard isExecutableFile(executablePath) else {
+                throw AppCoreError.codexUnavailable("Codex executable was not found at \(executablePath).")
+            }
+        } else if let resolvedPath = findExecutable(
+            named: executable,
+            path: resolvedEnvironment["PATH"] ?? "",
+            isExecutableFile: isExecutableFile
+        ) {
+            executablePath = resolvedPath
+        } else {
+            throw AppCoreError.codexUnavailable("The `\(executable)` CLI is not available on this Mac.")
+        }
+
+        return CLICommandResolution(
+            executableURL: URL(fileURLWithPath: executablePath),
+            arguments: Array(arguments.dropFirst()),
+            environment: resolvedEnvironment,
+            displayCommand: ([executablePath] + Array(arguments.dropFirst())).joined(separator: " ")
+        )
+    }
+
+    static func environmentWithFallbackPATH(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        homeDirectory: String = NSHomeDirectory()
+    ) -> [String: String] {
+        var resolvedEnvironment = environment
+        let normalizedHomeDirectory = (homeDirectory as NSString).expandingTildeInPath
+        if resolvedEnvironment["HOME"]?.isEmpty ?? true {
+            resolvedEnvironment["HOME"] = normalizedHomeDirectory
+        }
+
+        var pathEntries = parsePathEntries(resolvedEnvironment["PATH"] ?? "")
+        for candidate in fallbackPathEntries(homeDirectory: normalizedHomeDirectory) where !pathEntries.contains(candidate) {
+            pathEntries.append(candidate)
+        }
+        resolvedEnvironment["PATH"] = pathEntries.joined(separator: ":")
+        return resolvedEnvironment
+    }
+
+    private static func findExecutable(
+        named executable: String,
+        path: String,
+        isExecutableFile: (String) -> Bool
+    ) -> String? {
+        for directory in parsePathEntries(path) {
+            let candidate = URL(fileURLWithPath: directory, isDirectory: true)
+                .appendingPathComponent(executable)
+                .path
+            if isExecutableFile(candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    private static func parsePathEntries(_ path: String) -> [String] {
+        path
+            .split(separator: ":")
+            .map { String($0) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func fallbackPathEntries(homeDirectory: String) -> [String] {
+        [
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+            "/Applications/Codex.app/Contents/Resources",
+            "\(homeDirectory)/.local/bin",
+            "\(homeDirectory)/.cargo/bin",
+            "/Library/Apple/usr/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin"
+        ]
+    }
+}
+
 public final class CodexAppServerClientCallbacks: @unchecked Sendable {
     public var onCodexStatus: ((CodexStatusPayload) async -> Void)?
     public var onTurn: ((AgentTurnPayload) async -> Void)?
@@ -802,14 +907,16 @@ public actor CodexAppServerClient {
         updateStatus(startingStatus)
 
         let command = appServerCommandProvider()
-        guard let executable = command.first else {
+        guard !command.isEmpty else {
             throw AppCoreError.codexUnavailable("Missing Codex app-server command.")
         }
-        log.info("Launching Codex app-server command=\(([executable] + Array(command.dropFirst())).joined(separator: " ")) model=\(configuration.codexModel)")
+        let resolvedCommand = try CLICommandResolver.resolve(arguments: command)
+        log.info("Launching Codex app-server command=\(resolvedCommand.displayCommand) model=\(configuration.codexModel)")
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [executable] + Array(command.dropFirst())
+        process.executableURL = resolvedCommand.executableURL
+        process.arguments = resolvedCommand.arguments
+        process.environment = resolvedCommand.environment
 
         let stdin = Pipe()
         let stdout = Pipe()
@@ -1979,9 +2086,11 @@ public actor CodexAppServerClient {
     }
 
     private func runCommand(arguments: [String]) async throws -> String {
+        let resolvedCommand = try CLICommandResolver.resolve(arguments: arguments)
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = arguments
+        process.executableURL = resolvedCommand.executableURL
+        process.arguments = resolvedCommand.arguments
+        process.environment = resolvedCommand.environment
 
         let stdout = Pipe()
         let stderr = Pipe()

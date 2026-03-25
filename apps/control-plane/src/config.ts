@@ -98,9 +98,14 @@ function assertSecurePublicUrl(name: string, url: URL, allowedProtocol: "https:"
   }
 }
 
+function resolveDefaultHost(urls: URL[]) {
+  return urls.every((url) => isLoopbackHostname(url.hostname))
+    ? "127.0.0.1"
+    : "0.0.0.0";
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ControlPlaneConfig {
   const authMode = env.AUTH_MODE === "required" ? "required" : "none";
-  const host = env.HOST ?? "127.0.0.1";
   const port = Number(env.PORT ?? 8787);
   const databaseUrl = env.DATABASE_URL ?? null;
   const betterAuthSecret = env.BETTER_AUTH_SECRET ?? null;
@@ -136,6 +141,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ControlPlaneCo
   const speechMaxUploadBytes = parsePositiveInteger(env.SPEECH_MAX_UPLOAD_BYTES, 10 * 1024 * 1024, "SPEECH_MAX_UPLOAD_BYTES");
   const publicHttpUrl = new URL(publicHttpBaseUrl);
   const publicWsUrl = new URL(publicWsBaseUrl);
+  const host = env.HOST ?? resolveDefaultHost([publicPairUrl, publicHttpUrl, publicWsUrl]);
 
   if (authMode === "required") {
     if (!databaseUrl) {

@@ -33,6 +33,8 @@ type Listener = (event?: unknown) => void;
 type SelectedWindowId = number | null;
 
 const sockets: FakeWebSocket[] = [];
+let bootstrapSelectedWindowId: SelectedWindowId = 1;
+let resetThreadError: string | null = null;
 
 function createWindow() {
   return {
@@ -75,6 +77,7 @@ function createHostStatus(selectedWindowId: SelectedWindowId) {
 }
 
 function createBootstrapPayload(options?: {
+  selectedWindowId?: SelectedWindowId;
   speech?: {
     transcriptionAvailable: boolean;
     provider: "openai" | null;
@@ -96,7 +99,7 @@ function createBootstrapPayload(options?: {
       mode: "hosted"
     },
     windows: [createWindow()],
-    status: createHostStatus(1),
+    status: createHostStatus(options?.selectedWindowId ?? bootstrapSelectedWindowId),
     wsUrl: "ws://localhost:8787/ws/client?clientToken=token_1",
     speech: options?.speech ?? baseSpeechCapabilities
   };
@@ -142,6 +145,19 @@ class FakeWebSocket {
       case "stream.stop":
         this.respond(message.id, { ok: true });
         return;
+      case "window.select":
+        this.respond(message.id, { ok: true });
+        return;
+      case "agent.thread.reset":
+        if (resetThreadError) {
+          this.respondError(message.id, {
+            code: -32000,
+            message: resetThreadError
+          });
+          return;
+        }
+        this.respond(message.id, { ok: true });
+        return;
       case "semantic.snapshot":
         this.respond(message.id, {
           windowId: 1,
@@ -180,6 +196,24 @@ class FakeWebSocket {
           jsonrpc: "2.0",
           id,
           result
+        })
+      });
+    });
+  }
+
+  private respondError(
+    id: string | number,
+    error: {
+      code: number;
+      message: string;
+    }
+  ) {
+    queueMicrotask(() => {
+      this.emit("message", {
+        data: JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          error
         })
       });
     });
@@ -254,6 +288,8 @@ describe("App browser stream lifecycle", () => {
   const originalScrollIntoView = Element.prototype.scrollIntoView;
   const originalSecureContext = window.isSecureContext;
   const originalMediaDevices = navigator.mediaDevices;
+  const originalCreateObjectURL = URL.createObjectURL;
+  const originalRevokeObjectURL = URL.revokeObjectURL;
 
   let speechEnabled = true;
   let getUserMediaMock: ReturnType<typeof vi.fn>;
@@ -266,6 +302,8 @@ describe("App browser stream lifecycle", () => {
     window.localStorage.clear();
     window.localStorage.setItem(CLIENT_TOKEN_STORAGE_KEY, "token_1");
     Element.prototype.scrollIntoView = vi.fn();
+    bootstrapSelectedWindowId = 1;
+    resetThreadError = null;
     speechEnabled = true;
     transcriptionText = "transcribed request";
     transcriptionRequests = 0;
@@ -280,6 +318,14 @@ describe("App browser stream lifecycle", () => {
       value: {
         getUserMedia: getUserMediaMock
       },
+      configurable: true
+    });
+    Object.defineProperty(URL, "createObjectURL", {
+      value: vi.fn(() => "blob:remoteos-test"),
+      configurable: true
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      value: vi.fn(),
       configurable: true
     });
 
@@ -359,6 +405,14 @@ describe("App browser stream lifecycle", () => {
     });
     Object.defineProperty(navigator, "mediaDevices", {
       value: originalMediaDevices,
+      configurable: true
+    });
+    Object.defineProperty(URL, "createObjectURL", {
+      value: originalCreateObjectURL,
+      configurable: true
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      value: originalRevokeObjectURL,
       configurable: true
     });
 
@@ -459,6 +513,69 @@ describe("App browser stream lifecycle", () => {
         .map((payload) => JSON.parse(payload).method)
         .filter((method) => method === "stream.start")
     ).toHaveLength(1);
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("still selects a window when Codex thread reset fails", async () => {
+    bootstrapSelectedWindowId = null;
+    resetThreadError = "Codex app-server unavailable";
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flushAsync();
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(".chat-empty-action")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushAsync();
+
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>(".window-item")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushAsync();
+
+    const methods = sockets[0]!.sent.map((payload) => JSON.parse(payload).method);
+    expect(methods).toContain("window.select");
+    expect(methods).toContain("agent.thread.reset");
+    expect(container.textContent).toContain("Ready to help");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("renders the selected window snapshot while live frames are still loading", async () => {
+    bootstrapSelectedWindowId = 1;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flushAsync();
+
+    sockets[0]!.notify("window.snapshot", {
+      window: createWindow(),
+      capturedAt: NOW,
+      mimeType: "image/jpeg",
+      dataBase64: "ZmFrZQ=="
+    });
+    await flushAsync();
+
+    expect(container.querySelector(".window-preview img")).not.toBeNull();
+    expect(container.textContent).not.toContain("Loading...");
 
     await act(async () => {
       root.unmount();

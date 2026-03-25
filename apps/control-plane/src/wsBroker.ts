@@ -157,7 +157,10 @@ export async function registerWsBroker(
                 }
 
                 for (const clientSocket of store.getConnectedClientSockets(resolvedHostIdentity.deviceId)) {
-                  if (notification.data.method === "window.frame") {
+                  if (
+                    notification.data.method === "window.frame"
+                    || notification.data.method === "window.snapshot"
+                  ) {
                     queueSocketFrame(clientSocket, notification.data);
                   } else {
                     queueSocketMessage(clientSocket, notification.data);

@@ -26,6 +26,13 @@ For the macOS host:
 swift run --package-path apps/macos
 ```
 
+For the hosted product download flow, package a signed macOS app bundle separately:
+
+```bash
+REMOTEOS_CONTROL_PLANE_BASE_URL=https://your-hosted-control-plane.example.com \
+apps/macos/scripts/package_hosted_app.sh
+```
+
 ## Control-plane modes
 
 RemoteOS keeps the open-source and hosted flows in the same repo.
@@ -57,6 +64,7 @@ The initial implementation supports:
 
 ## Notes
 
-- The macOS host is distributed outside the Mac App Store.
+- Hosted macOS distribution is outside the Mac App Store and should be shipped as a signed, notarized download.
+- The open-source/local macOS flow remains source-based through `swift run --package-path apps/macos`.
 - Screen Recording and Accessibility are baseline permissions.
 - Hosted and direct OSS modes share the same protocol; the direct path can run the control-plane locally for development.

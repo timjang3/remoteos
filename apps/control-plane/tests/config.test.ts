@@ -9,7 +9,7 @@ describe("loadConfig", () => {
       PUBLIC_PAIR_BASE_URL: "http://192.168.1.25:5173"
     });
 
-    expect(config.host).toBe("127.0.0.1");
+    expect(config.host).toBe("0.0.0.0");
     expect(config.publicHttpBaseUrl).toBe("http://192.168.1.25:8787");
     expect(config.publicWsBaseUrl).toBe("ws://192.168.1.25:8787");
     expect(config.trustProxy).toBe(false);
@@ -40,6 +40,20 @@ describe("loadConfig", () => {
     expect(config.trustProxy).toEqual(["loopback", "linklocal", "uniquelocal"]);
     expect(config.publicHttpBaseUrl).toBe("http://localhost:8787");
     expect(config.publicWsBaseUrl).toBe("ws://localhost:8787");
+  });
+
+  it("defaults hosted public deployments to a public bind host", () => {
+    const config = loadConfig({
+      AUTH_MODE: "required",
+      DATABASE_URL: "postgres://postgres:postgres@localhost:5433/remoteos",
+      BETTER_AUTH_SECRET: "change-me-local-only-32-bytes-or-more",
+      ALLOWED_ORIGINS: "https://remoteos.app",
+      PUBLIC_PAIR_BASE_URL: "https://remoteos.app",
+      PUBLIC_HTTP_BASE_URL: "https://control.remoteos.app",
+      PUBLIC_WS_BASE_URL: "wss://control.remoteos.app"
+    });
+
+    expect(config.host).toBe("0.0.0.0");
   });
 
   it("rejects insecure hosted public URLs and blanket proxy trust", () => {

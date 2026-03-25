@@ -23,6 +23,61 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve release metadata
+        id: release_meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "release" ]]; then
+            version="$RELEASE_TAG"
+          else
+            version="$INPUT_VERSION"
+          fi
+
+          version="${version#v}"
+
+          if [[ -z "$version" ]]; then
+            echo "Unable to resolve release version." >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag_name=v$version" >> "$GITHUB_OUTPUT"
+          echo "release_name=RemoteOS $version" >> "$GITHUB_OUTPUT"
+
+      - name: Validate hosted release configuration
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          CONTROL_PLANE_BASE_URL: ${{ vars.REMOTEOS_HOSTED_CONTROL_PLANE_BASE_URL }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+
+          for name in \
+            CONTROL_PLANE_BASE_URL \
+            CERTIFICATE_P12_BASE64 \
+            CERTIFICATE_PASSWORD \
+            KEYCHAIN_PASSWORD \
+            SIGNING_IDENTITY \
+            APPLE_ID \
+            APPLE_PASSWORD \
+            APPLE_TEAM_ID
+          do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required hosted release setting: $name" >&2
+              exit 1
+            fi
+          done
+
       - name: Prepare signing keychain
         if: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 != '' }}
         env:
@@ -44,7 +99,7 @@ jobs:
 
       - name: Build hosted app bundle
         env:
-          REMOTEOS_VERSION: ${{ github.event.release.tag_name || inputs.version }}
+          REMOTEOS_VERSION: ${{ steps.release_meta.outputs.version }}
           REMOTEOS_BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
           REMOTEOS_CONTROL_PLANE_BASE_URL: ${{ vars.REMOTEOS_HOSTED_CONTROL_PLANE_BASE_URL }}
           REMOTEOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
@@ -60,17 +115,34 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: remoteos-hosted-macos
+          name: remoteos-hosted-macos-${{ steps.release_meta.outputs.version }}
           path: |
             dist/macos-hosted/*.zip
             dist/macos-hosted/*.dmg
             dist/macos-hosted/*.txt
+          if-no-files-found: error
+
+      - name: Create draft GitHub release
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/macos-hosted/*.zip
+            dist/macos-hosted/*.dmg
+            dist/macos-hosted/*.txt
+          generate_release_notes: true
+          name: ${{ steps.release_meta.outputs.release_name }}
+          tag_name: ${{ steps.release_meta.outputs.tag_name }}
 
       - name: Attach artifacts to GitHub release
         if: ${{ github.event_name == 'release' }}
         uses: softprops/action-gh-release@v2
         with:
+          fail_on_unmatched_files: true
           files: |
             dist/macos-hosted/*.zip
             dist/macos-hosted/*.dmg
             dist/macos-hosted/*.txt
+          tag_name: ${{ github.event.release.tag_name }}

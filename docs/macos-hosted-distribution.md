@@ -7,6 +7,23 @@ RemoteOS should support two separate macOS host flows:
 
 Do not collapse those into one install path. The downloadable app should exist for the hosted product, while the source-based flow remains the OSS/local path.
 
+## Public repo model
+
+If the repository is public, keep the split explicit:
+
+- Public:
+  - source code
+  - release workflow YAML
+  - generic environment variable names
+  - GitHub Releases metadata, version numbers, checksums, and the final `.dmg` / `.zip`
+- Maintainer-only:
+  - Apple signing certificate material
+  - certificate passwords
+  - notary credentials
+  - any control-plane admin, database, or service secrets
+
+Treat the hosted control-plane base URL as product configuration, not a secret. A shipped app can expose it through bundle inspection or normal network traffic, so do not rely on hiding it in the repository for security.
+
 ## Hosted release build
 
 The hosted build is assembled from the existing Swift package and packaged into a standalone `.app` without changing the local developer workflow.
@@ -64,8 +81,18 @@ Required GitHub variable:
 
 Publish via:
 
-- `workflow_dispatch` for manual releases
-- GitHub `release.published` to attach artifacts to a tagged release automatically
+- `workflow_dispatch` to build, notarize, and create or update a draft GitHub Release tagged `vX.Y.Z`
+- GitHub `release.published` to attach artifacts to a published tagged release automatically
+
+Recommended public distribution flow:
+
+1. Keep the repo public.
+2. Store signing and notary material only in GitHub Secrets.
+3. Run the hosted release workflow from GitHub Actions.
+4. Review the draft release notes and attached artifacts.
+5. Publish the GitHub Release and link users to that release or its `.dmg`.
+
+That gives end users a clean download surface without exposing maintainer-only credentials in the repo.
 
 ## Local OSS run
 

@@ -33,6 +33,15 @@ REMOTEOS_CONTROL_PLANE_BASE_URL=https://your-hosted-control-plane.example.com \
 apps/macos/scripts/package_hosted_app.sh
 ```
 
+## Downloads
+
+If you keep this repository public, the clean split is:
+
+- open-source users run the stack from source
+- hosted-product users download the signed `.dmg` from GitHub Releases or your own download page
+
+Do not commit packaged binaries into the repository. Publish the notarized artifacts from CI instead.
+
 ## Control-plane modes
 
 RemoteOS keeps the open-source and hosted flows in the same repo.
@@ -65,6 +74,8 @@ The initial implementation supports:
 ## Notes
 
 - Hosted macOS distribution is outside the Mac App Store and should be shipped as a signed, notarized download.
+- In a public repo, keep signing certificates, notary credentials, and other release secrets only in GitHub Secrets.
+- The hosted control-plane URL is product configuration, not a secret. Once you ship the app, users can inspect it from the bundle or network traffic.
 - The open-source/local macOS flow remains source-based through `swift run --package-path apps/macos`.
 - Screen Recording and Accessibility are baseline permissions.
 - Hosted and direct OSS modes share the same protocol; the direct path can run the control-plane locally for development.

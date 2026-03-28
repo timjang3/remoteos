@@ -10,6 +10,12 @@ apps/macos/.build
 swift-packages/AppCore/.build
 *.xcuserdata
 *.xcuserstate
+*.xcarchive
+*.xcresult
+*.dSYM
+*.app
+*.dmg
+*.pkg
 DerivedData
 
 # Environment / secrets

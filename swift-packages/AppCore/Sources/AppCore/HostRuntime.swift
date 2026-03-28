@@ -52,6 +52,7 @@ public final class HostRuntime: ObservableObject {
 
     private var refreshTask: Task<Void, Never>?
     private var brokerReconnectTask: Task<Void, Never>?
+    private var pendingBrokerReconnectDelay: Duration?
     private var registrationTask: Task<BrokerRegistration, Error>?
     private var enrollmentPollingTask: Task<Void, Never>?
     private var lastOpenedEnrollmentToken: String?
@@ -281,11 +282,17 @@ public final class HostRuntime: ObservableObject {
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in
             while let self, !Task.isCancelled {
-                if self.permissions.screenRecording == .granted || !self.windows.isEmpty || self.selectedWindowID != nil {
-                    await self.refreshWindowsNow()
-                    await self.publishDeckSnapshots()
-                    await self.publishSemanticDiffIfNeeded()
+                let latest = self.permissionCoordinator.snapshot()
+                if latest.screenRecording != self.permissions.screenRecording
+                    || latest.accessibility != self.permissions.accessibility
+                {
+                    self.permissions = latest
+                    self.hostStatus.screenRecording = latest.screenRecording
+                    self.hostStatus.accessibility = latest.accessibility
                 }
+                await self.refreshWindowsNow()
+                await self.publishDeckSnapshots()
+                await self.publishSemanticDiffIfNeeded()
                 try? await Task.sleep(for: .seconds(3))
             }
         }
@@ -299,6 +306,7 @@ public final class HostRuntime: ObservableObject {
         refreshTask?.cancel()
         brokerReconnectTask?.cancel()
         brokerReconnectTask = nil
+        pendingBrokerReconnectDelay = nil
         enrollmentPollingTask?.cancel()
         enrollmentPollingTask = nil
         clearAllPrompts(status: .interrupted)
@@ -487,11 +495,20 @@ public final class HostRuntime: ObservableObject {
         guard shouldMaintainBrokerConnection else {
             return
         }
+        if let pendingBrokerReconnectDelay {
+            self.pendingBrokerReconnectDelay = min(pendingBrokerReconnectDelay, delay)
+        } else {
+            pendingBrokerReconnectDelay = delay
+        }
         guard brokerReconnectTask == nil else {
-            log.debug("Broker reconnect already scheduled")
+            log.debug(
+                "Broker reconnect already scheduled; queued follow-up delay=\(logDuration(pendingBrokerReconnectDelay ?? delay))"
+            )
             return
         }
-        log.info("Scheduling broker reconnect delay=\(logDuration(delay))")
+
+        let scheduledDelay = pendingBrokerReconnectDelay ?? delay
+        log.info("Scheduling broker reconnect delay=\(logDuration(scheduledDelay))")
 
         brokerReconnectTask = Task { @MainActor [weak self] in
             guard let self else {
@@ -499,10 +516,17 @@ public final class HostRuntime: ObservableObject {
             }
             defer {
                 self.brokerReconnectTask = nil
+                if self.shouldMaintainBrokerConnection, self.pendingBrokerReconnectDelay != nil {
+                    self.scheduleBrokerReconnect(after: self.pendingBrokerReconnectDelay ?? .seconds(1))
+                }
             }
 
-            var nextDelay = delay
             while self.shouldMaintainBrokerConnection, !Task.isCancelled {
+                guard let nextDelay = self.pendingBrokerReconnectDelay else {
+                    return
+                }
+                self.pendingBrokerReconnectDelay = nil
+
                 if nextDelay > .zero {
                     try? await Task.sleep(for: nextDelay)
                     guard !Task.isCancelled else {
@@ -514,13 +538,22 @@ public final class HostRuntime: ObservableObject {
                     self.log.info("Attempting broker reconnect")
                     try await self.connectBrokerAndRefreshPairing()
                     self.lastConnectionError = nil
+                    if self.pendingBrokerReconnectDelay != nil {
+                        self.log.warning("Broker reconnect finished with a queued retry request; retrying")
+                        continue
+                    }
                     self.log.notice("Broker reconnect succeeded")
                     return
                 } catch {
                     self.lastConnectionError = error.localizedDescription
                     self.log.error("Broker reconnect failed error=\(error.localizedDescription)")
                     await self.recordTrace(level: "error", kind: "broker_connect", message: error.localizedDescription)
-                    nextDelay = Self.reconnectDelay(for: error)
+                    let retryDelay = Self.reconnectDelay(for: error)
+                    if let pendingBrokerReconnectDelay {
+                        self.pendingBrokerReconnectDelay = min(pendingBrokerReconnectDelay, retryDelay)
+                    } else {
+                        self.pendingBrokerReconnectDelay = retryDelay
+                    }
                 }
             }
         }
@@ -645,6 +678,7 @@ public final class HostRuntime: ObservableObject {
         registrationTask = nil
         brokerReconnectTask?.cancel()
         brokerReconnectTask = nil
+        pendingBrokerReconnectDelay = nil
         enrollmentPollingTask?.cancel()
         enrollmentPollingTask = nil
         pairingSession = nil
@@ -1276,7 +1310,7 @@ public final class HostRuntime: ObservableObject {
         case "semantic.diff.subscribe":
             await brokerClient.sendSuccess(id: request.id ?? UUID().uuidString, payload: ["ok": true])
         case "host.state.sync":
-            await brokerClient.sendNotification(method: "windows.updated", payload: ["windows": windows])
+            await refreshWindowsNow()
             await publishHostStatus()
             await publishDeckSnapshots()
             if let selectedWindowID {

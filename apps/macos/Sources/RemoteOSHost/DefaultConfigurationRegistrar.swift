@@ -7,7 +7,6 @@ enum DefaultConfigurationRegistrar {
     private static let sourceBuildResetFlagKey = "didResetHostedSourceDefaultsV1"
     private static let legacyLocalBaseURL = "http://localhost:8787"
     private static let legacyLocalHostMode = "hosted"
-    private static let accidentalHostedBaseURL = "https://control-plane-production-8dfe.up.railway.app"
 
     static func register() {
         guard
@@ -58,7 +57,10 @@ enum DefaultConfigurationRegistrar {
 
         let storedBaseURL = persistentDomain["controlPlaneBaseURL"] as? String
         let storedHostMode = persistentDomain["hostMode"] as? String ?? legacyLocalHostMode
-        guard storedBaseURL == accidentalHostedBaseURL, storedHostMode == legacyLocalHostMode else {
+        guard
+            let storedBaseURL,
+            shouldResetHostedSourceOverride(baseURL: storedBaseURL, hostMode: storedHostMode)
+        else {
             return
         }
 
@@ -124,5 +126,28 @@ enum DefaultConfigurationRegistrar {
 
         userDefaults.removeObject(forKey: "controlPlaneBaseURL")
         userDefaults.removeObject(forKey: "hostMode")
+    }
+
+    private static func shouldResetHostedSourceOverride(baseURL: String, hostMode: String) -> Bool {
+        guard hostMode == legacyLocalHostMode else {
+            return false
+        }
+        guard
+            let url = URL(string: baseURL),
+            let scheme = url.scheme?.lowercased(),
+            let host = url.host?.lowercased()
+        else {
+            return false
+        }
+        guard scheme == "https", url.path.isEmpty || url.path == "/" else {
+            return false
+        }
+
+        switch host {
+        case "localhost", "127.0.0.1", "::1":
+            return false
+        default:
+            return true
+        }
     }
 }

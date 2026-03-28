@@ -79,7 +79,6 @@ jobs:
           done
 
       - name: Prepare signing keychain
-        if: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 != '' }}
         env:
           CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}

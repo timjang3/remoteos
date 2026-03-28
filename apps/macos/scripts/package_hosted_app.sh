@@ -73,10 +73,24 @@ function notarize_file() {
     fi
 
     if [[ -n "$APPLE_ID" && -n "$APPLE_PASSWORD" && -n "$APPLE_TEAM_ID" ]]; then
-        xcrun notarytool submit "$file_path" --wait \
+        local submission_output
+        submission_output=$(xcrun notarytool submit "$file_path" --wait \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID"
+            --team-id "$APPLE_TEAM_ID" 2>&1) || true
+        echo "$submission_output"
+
+        if echo "$submission_output" | grep -q "status: Rejected"; then
+            local submission_id
+            submission_id=$(echo "$submission_output" | grep "id:" | head -1 | awk '{print $2}')
+            echo "Fetching notarization log for rejected submission $submission_id..."
+            xcrun notarytool log "$submission_id" \
+                --apple-id "$APPLE_ID" \
+                --password "$APPLE_PASSWORD" \
+                --team-id "$APPLE_TEAM_ID" || true
+            echo "Notarization rejected. See log above for details." >&2
+            exit 1
+        fi
         return
     fi
 
@@ -207,11 +221,15 @@ if [[ -n "$ICON_FILE" ]]; then
 fi
 
 ENTITLEMENTS_FILE="$APP_DIR/Resources/RemoteOS.entitlements"
+ENTITLEMENTS_FLAG=()
+if [[ -f "$ENTITLEMENTS_FILE" ]] && /usr/libexec/PlistBuddy -c "Print" "$ENTITLEMENTS_FILE" 2>/dev/null | grep -q "="; then
+    ENTITLEMENTS_FLAG=(--entitlements "$ENTITLEMENTS_FILE")
+fi
 
 if [[ -n "$SIGNING_IDENTITY" ]]; then
     if [[ "$SIGNING_IDENTITY" == Developer\ ID\ Application:* ]]; then
         echo "Signing app with Developer ID identity..."
-        codesign --force --timestamp --options runtime --entitlements "$ENTITLEMENTS_FILE" --sign "$SIGNING_IDENTITY" "$APP_ROOT"
+        codesign --force --timestamp --options runtime "${ENTITLEMENTS_FLAG[@]}" --sign "$SIGNING_IDENTITY" "$APP_ROOT"
     else
         if [[ "$AUTO_DETECTED_SIGNING_IDENTITY" == "1" ]]; then
             echo "Signing app with auto-detected local identity: $SIGNING_IDENTITY"

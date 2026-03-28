@@ -75,7 +75,7 @@ public final class HostRuntime: ObservableObject {
 
     public init(
         configurationStore: ConfigurationStore = ConfigurationStore(),
-        deviceSecretStore: DeviceSecretStore = DeviceSecretStore(),
+        deviceSecretStore: DeviceSecretStore = DeviceSecretStore(mode: .defaultsOnly),
         openAIAPIKeyStore: OpenAIAPIKeyStore = OpenAIAPIKeyStore(),
         permissionCoordinator: PermissionCoordinator = PermissionCoordinator(),
         screenshotService: ScreenshotService = ScreenshotService(),
@@ -530,7 +530,15 @@ public final class HostRuntime: ObservableObject {
         guard shouldMaintainBrokerConnection else {
             return
         }
-        let registration = try await ensureDeviceRegistration()
+
+        let registration: BrokerRegistration
+        do {
+            registration = try await ensureDeviceRegistration()
+        } catch {
+            log.error("Step [register_device] failed: \(error.localizedDescription)")
+            throw error
+        }
+
         if registration.isApprovalRequired {
             try await beginEnrollmentFlow(from: registration)
             return
@@ -540,26 +548,53 @@ public final class HostRuntime: ObservableObject {
             let deviceID = registration.deviceId ?? registration.device?.id,
             let wsURL = registration.wsUrl
         else {
+            log.error("Step [register_device] returned incomplete registration: device=\(registration.device?.id ?? "nil") wsUrl=\(registration.wsUrl ?? "nil")")
             throw AppCoreError.invalidResponse
         }
         pendingEnrollment = nil
         enrollmentPollingTask?.cancel()
         enrollmentPollingTask = nil
         lastOpenedEnrollmentToken = nil
-        let authMode = try await currentControlPlaneAuthMode()
-        let brokerWSURLString =
-            authMode == .required
-            ? try await requestHostWebSocketTicket(
-                deviceID: deviceID,
-                deviceSecret: registration.deviceSecret
-            ).wsUrl
-            : wsURL
-        try await connectBroker(wsURLString: brokerWSURLString)
+
+        let authMode: ControlPlaneAuthMode
+        do {
+            authMode = try await currentControlPlaneAuthMode()
+        } catch {
+            log.error("Step [auth_mode_check] failed: \(error.localizedDescription)")
+            throw error
+        }
+
+        let brokerWSURLString: String
+        do {
+            brokerWSURLString =
+                authMode == .required
+                ? try await requestHostWebSocketTicket(
+                    deviceID: deviceID,
+                    deviceSecret: registration.deviceSecret
+                ).wsUrl
+                : wsURL
+        } catch {
+            log.error("Step [ws_ticket] failed: \(error.localizedDescription)")
+            throw error
+        }
+
+        do {
+            try await connectBroker(wsURLString: brokerWSURLString)
+        } catch {
+            log.error("Step [broker_ws_connect] failed: \(error.localizedDescription)")
+            throw error
+        }
+
         if Self.shouldRefreshPairingSession(current: pairingSession, deviceID: approvedDevice.id) {
-            pairingSession = try await requestPairingSession(
-                deviceID: approvedDevice.id,
-                deviceSecret: registration.deviceSecret
-            )
+            do {
+                pairingSession = try await requestPairingSession(
+                    deviceID: approvedDevice.id,
+                    deviceSecret: registration.deviceSecret
+                )
+            } catch {
+                log.error("Step [pairing_session] failed: \(error.localizedDescription)")
+                throw error
+            }
         } else {
             log.info("Reusing existing pairing session sessionId=\(pairingSession?.id ?? "nil") deviceId=\(approvedDevice.id)")
         }
@@ -887,8 +922,13 @@ public final class HostRuntime: ObservableObject {
             )
         }
         guard (200 ..< 300).contains(httpResponse.statusCode) else {
-            let message = (try? anyDictionary(from: data)["error"] as? String) ?? "HTTP \(httpResponse.statusCode)"
-            throw AppCoreError.invalidPayload(message)
+            let dict = try? anyDictionary(from: data)
+            let errorField = dict?["error"] as? String
+            let messageField = dict?["message"] as? String
+            let detail = messageField != nil && messageField != errorField
+                ? "\(errorField ?? "HTTP \(httpResponse.statusCode)"): \(messageField!)"
+                : errorField ?? "HTTP \(httpResponse.statusCode)"
+            throw AppCoreError.invalidPayload(detail)
         }
     }
 

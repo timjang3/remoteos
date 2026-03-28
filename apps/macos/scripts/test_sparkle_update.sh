@@ -78,8 +78,9 @@ function ensure_keypair() {
     # generate_keys writes to Keychain by default; use -x to export
     "$SPARKLE_TOOLS_DIR/bin/generate_keys" -p 2>/dev/null && true
 
-    # Export private key from Keychain to a file
+    # Export private key from Keychain to a file (owner-only permissions)
     "$SPARKLE_TOOLS_DIR/bin/generate_keys" -x "$key_file"
+    chmod 600 "$key_file"
     SPARKLE_PUBLIC_KEY="$("$SPARKLE_TOOLS_DIR/bin/generate_keys" -p 2>/dev/null)"
     echo "$SPARKLE_PUBLIC_KEY" > "$pub_file"
 

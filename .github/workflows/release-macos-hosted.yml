@@ -188,6 +188,16 @@ jobs:
           curl -fsSL \
             -o "$SPARKLE_DOWNLOAD_PATH" \
             "https://github.com/sparkle-project/Sparkle/releases/download/2.9.0/Sparkle-2.9.0.tar.xz"
+
+          EXPECTED_HASH="01e0f0ebf6614061ea816d414de50f937d64ffa6822ad572243031ca3676fe19"
+          ACTUAL_HASH="$(shasum -a 256 "$SPARKLE_DOWNLOAD_PATH" | awk '{print $1}')"
+          if [[ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]]; then
+            echo "Sparkle archive checksum mismatch." >&2
+            echo "  Expected: $EXPECTED_HASH" >&2
+            echo "  Actual:   $ACTUAL_HASH" >&2
+            exit 1
+          fi
+
           tar -xJf "$SPARKLE_DOWNLOAD_PATH" -C "$SPARKLE_DIST_DIR"
 
           GENERATE_APPCAST="$(find "$SPARKLE_DIST_DIR" -path '*/bin/generate_appcast' -type f | head -n 1)"

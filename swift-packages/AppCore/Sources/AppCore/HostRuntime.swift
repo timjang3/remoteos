@@ -17,6 +17,9 @@ public enum OpenAIAPIKeyStorageSource: String, Sendable {
 
 @MainActor
 public final class HostRuntime: ObservableObject {
+    static let previewFrameMaxPixelSize = WindowStreamService.maxStreamLongEdgePixels
+    static let previewFrameCompressionQuality = 0.72
+
     @Published public private(set) var configuration: HostConfiguration
     @Published public private(set) var permissions: PermissionSnapshot
     @Published public private(set) var windows: [WindowDescriptor] = []
@@ -1129,7 +1132,7 @@ public final class HostRuntime: ObservableObject {
         }
 
         do {
-            let frame = try await captureAndStoreFrame(windowID: windowID, reason: reason)
+            let frame = try await capturePreviewFrame(windowID: windowID, reason: reason)
             enqueueStreamFrame(frame)
         } catch {
             await recordTrace(
@@ -1180,6 +1183,21 @@ public final class HostRuntime: ObservableObject {
                 toolCapturedFrames.removeValue(forKey: entry.key)
             }
         }
+        return frame
+    }
+
+    private func capturePreviewFrame(windowID: Int, reason: String) async throws -> CapturedFrame {
+        let axBounds = windows.first(where: { $0.id == windowID })
+            .flatMap { accessibilityService.windowBounds(for: $0) }
+        let frame = try await screenshotService.capture(
+            windowID: windowID,
+            topologyVersion: displayTopologyVersion,
+            reason: reason,
+            accessibilityBounds: axBounds,
+            maxPixelSize: Self.previewFrameMaxPixelSize,
+            compressionQuality: Self.previewFrameCompressionQuality
+        )
+        latestFrameByWindowID[frame.windowId] = frame
         return frame
     }
 

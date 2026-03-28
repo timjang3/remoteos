@@ -20,7 +20,7 @@ public final class WindowStreamService: NSObject, @unchecked Sendable {
     private var currentTopologyVersion = 0
     private var fallbackSourceRect = CGRect.zero
     private var fallbackPointPixelScale = 1.0
-    private static let maxStreamLongEdgePixels = 1280
+    static let maxStreamLongEdgePixels = 1280
 
     public override init() {
         super.init()

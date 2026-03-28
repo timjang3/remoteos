@@ -1,6 +1,9 @@
 import AppKit
 import Foundation
+import os.log
 @preconcurrency import Sparkle
+
+private let logger = Logger(subsystem: "com.remoteos.host", category: "AppUpdater")
 
 enum ForegroundSessionReason: Hashable {
     case settingsWindow
@@ -33,23 +36,43 @@ final class ForegroundSessionCoordinator {
 final class AppUpdater: NSObject, SPUStandardUserDriverDelegate {
     private let foregroundSessionCoordinator: ForegroundSessionCoordinator
     private var updaterController: SPUStandardUpdaterController?
+    private var startupError: String?
 
     @MainActor
     init(foregroundSessionCoordinator: ForegroundSessionCoordinator) {
         self.foregroundSessionCoordinator = foregroundSessionCoordinator
         super.init()
 
-        if Self.isSparkleConfigured {
-            updaterController = SPUStandardUpdaterController(
-                updaterDelegate: nil,
-                userDriverDelegate: self
-            )
+        guard Self.isSparkleConfigured else {
+            logger.info("Sparkle not configured (no SUFeedURL/SUPublicEDKey in Info.plist)")
+            return
+        }
+
+        let controller = SPUStandardUpdaterController(
+            startingUpdater: false,
+            updaterDelegate: nil,
+            userDriverDelegate: self
+        )
+        do {
+            try controller.updater.start()
+            updaterController = controller
+            logger.info("Sparkle updater started successfully")
+        } catch {
+            let nsError = error as NSError
+            startupError = nsError.localizedDescription
+            logger.error("Sparkle updater failed to start: \(error.localizedDescription, privacy: .public) (domain=\(nsError.domain, privacy: .public) code=\(nsError.code))")
+            updaterController = nil
         }
     }
 
     @MainActor
     var isAvailable: Bool {
         updaterController != nil
+    }
+
+    @MainActor
+    var isConfiguredButFailed: Bool {
+        Self.isSparkleConfigured && updaterController == nil
     }
 
     @MainActor

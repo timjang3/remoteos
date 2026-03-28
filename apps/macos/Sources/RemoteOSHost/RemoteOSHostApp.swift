@@ -750,6 +750,18 @@ struct SettingsView: View {
                         appUpdater.checkForUpdates()
                     }
                 }
+            } else if appUpdater.isConfiguredButFailed {
+                Section("Updates") {
+                    HStack {
+                        Text("Installed version")
+                        Spacer()
+                        Text(appUpdater.currentVersionDescription)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Auto-update is unavailable. Check Console logs (category: AppUpdater) for details.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Launch") {

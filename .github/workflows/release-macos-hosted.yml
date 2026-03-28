@@ -134,6 +134,7 @@ jobs:
           generate_release_notes: true
           name: ${{ steps.release_meta.outputs.release_name }}
           tag_name: ${{ steps.release_meta.outputs.tag_name }}
+          target_commitish: ${{ github.sha }}
 
       - name: Attach artifacts to GitHub release
         if: ${{ github.event_name == 'release' }}

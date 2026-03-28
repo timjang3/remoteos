@@ -393,7 +393,7 @@ private actor CaptureGate {
     private var available = true
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
-    func withPermit<T>(_ operation: @Sendable () async throws -> T) async throws -> T {
+    func withPermit<T: Sendable>(_ operation: @Sendable () async throws -> T) async throws -> T {
         if available {
             available = false
         } else {

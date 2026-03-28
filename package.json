@@ -1,6 +1,7 @@
 {
   "name": "remoteos",
   "private": true,
+  "license": "MIT",
   "packageManager": "pnpm@10.29.3",
   "scripts": {
     "build": "turbo run build && pnpm build:swift",

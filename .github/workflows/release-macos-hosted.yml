@@ -57,8 +57,11 @@ jobs:
           CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           CONTROL_PLANE_BASE_URL: ${{ vars.REMOTEOS_HOSTED_CONTROL_PLANE_BASE_URL }}
+          EVENT_NAME: ${{ github.event_name }}
           KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
           SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
         run: |
           set -euo pipefail
 
@@ -70,13 +73,19 @@ jobs:
             SIGNING_IDENTITY \
             APPLE_ID \
             APPLE_PASSWORD \
-            APPLE_TEAM_ID
+            APPLE_TEAM_ID \
+            SPARKLE_PUBLIC_ED_KEY
           do
             if [[ -z "${!name:-}" ]]; then
               echo "Missing required hosted release setting: $name" >&2
               exit 1
             fi
           done
+
+          if [[ "$EVENT_NAME" == "release" && -z "${SPARKLE_PRIVATE_ED_KEY:-}" ]]; then
+            echo "Missing required hosted release setting: SPARKLE_PRIVATE_ED_KEY" >&2
+            exit 1
+          fi
 
       - name: Prepare signing keychain
         env:
@@ -101,6 +110,7 @@ jobs:
           REMOTEOS_VERSION: ${{ steps.release_meta.outputs.version }}
           REMOTEOS_BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
           REMOTEOS_CONTROL_PLANE_BASE_URL: ${{ vars.REMOTEOS_HOSTED_CONTROL_PLANE_BASE_URL }}
+          REMOTEOS_SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
           REMOTEOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
           REMOTEOS_NOTARY_APPLE_ID: ${{ secrets.APPLE_ID }}
           REMOTEOS_NOTARY_APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -146,3 +156,76 @@ jobs:
             dist/macos-hosted/*.dmg
             dist/macos-hosted/*.txt
           tag_name: ${{ github.event.release.tag_name }}
+
+      - name: Configure GitHub Pages
+        if: ${{ github.event_name == 'release' }}
+        uses: actions/configure-pages@v5
+
+      - name: Generate Sparkle appcast
+        if: ${{ github.event_name == 'release' }}
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+        run: |
+          set -euo pipefail
+
+          APPCAST_SOURCE_DIR="$RUNNER_TEMP/appcast-source"
+          APPCAST_SITE_DIR="$RUNNER_TEMP/appcast-site"
+          SPARKLE_DOWNLOAD_PATH="$RUNNER_TEMP/Sparkle-2.9.0.tar.xz"
+          SPARKLE_DIST_DIR="$RUNNER_TEMP/sparkle-dist"
+
+          rm -rf "$APPCAST_SOURCE_DIR" "$APPCAST_SITE_DIR" "$SPARKLE_DIST_DIR"
+          mkdir -p "$APPCAST_SOURCE_DIR" "$APPCAST_SITE_DIR" "$SPARKLE_DIST_DIR"
+
+          shopt -s nullglob
+          dmgs=(dist/macos-hosted/*.dmg)
+          if [[ ${#dmgs[@]} -ne 1 ]]; then
+            echo "Expected exactly one hosted DMG artifact, found ${#dmgs[@]}." >&2
+            exit 1
+          fi
+          cp "${dmgs[0]}" "$APPCAST_SOURCE_DIR/"
+
+          curl -fsSL \
+            -o "$SPARKLE_DOWNLOAD_PATH" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/2.9.0/Sparkle-2.9.0.tar.xz"
+          tar -xJf "$SPARKLE_DOWNLOAD_PATH" -C "$SPARKLE_DIST_DIR"
+
+          GENERATE_APPCAST="$(find "$SPARKLE_DIST_DIR" -path '*/bin/generate_appcast' -type f | head -n 1)"
+          if [[ -z "$GENERATE_APPCAST" ]]; then
+            echo "Unable to locate Sparkle generate_appcast tool." >&2
+            exit 1
+          fi
+
+          printf '%s' "$SPARKLE_PRIVATE_ED_KEY" | "$GENERATE_APPCAST" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/timjang3/remoteos/releases/download/$RELEASE_TAG/" \
+            --maximum-versions 1 \
+            --maximum-deltas 0 \
+            --full-release-notes-url "https://github.com/timjang3/remoteos/releases/tag/$RELEASE_TAG" \
+            -o "$APPCAST_SITE_DIR/appcast.xml" \
+            "$APPCAST_SOURCE_DIR"
+
+          touch "$APPCAST_SITE_DIR/.nojekyll"
+
+      - name: Upload appcast artifact
+        if: ${{ github.event_name == 'release' }}
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ${{ runner.temp }}/appcast-site
+
+  deploy-appcast:
+    if: ${{ github.event_name == 'release' }}
+    needs:
+      - build-hosted-macos
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy appcast
+        id: deployment
+        uses: actions/deploy-pages@v4

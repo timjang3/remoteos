@@ -1,3 +1,4 @@
+import AppKit
 import AppCore
 import ServiceManagement
 import SwiftUI
@@ -11,8 +12,16 @@ struct RemoteOSHostApp: App {
         DefaultConfigurationRegistrar.register()
         RemoteOSBranding.applyDockIcon()
         let runtime = RuntimeHolder.makeRuntime()
+        let foregroundSessionCoordinator = ForegroundSessionCoordinator { policy in
+            NSApp.setActivationPolicy(policy)
+        }
+        let appUpdater = AppUpdater(foregroundSessionCoordinator: foregroundSessionCoordinator)
         _runtime = StateObject(wrappedValue: runtime)
-        settingsWindowController = SettingsWindowController(runtime: runtime)
+        settingsWindowController = SettingsWindowController(
+            runtime: runtime,
+            appUpdater: appUpdater,
+            foregroundSessionCoordinator: foregroundSessionCoordinator
+        )
         runtime.start()
     }
 
@@ -572,17 +581,25 @@ struct ContentView: View {
 
 @MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
+    private let appUpdater: AppUpdater
+    private let foregroundSessionCoordinator: ForegroundSessionCoordinator
     private let runtime: HostRuntime
     private var window: NSWindow?
 
-    init(runtime: HostRuntime) {
+    init(
+        runtime: HostRuntime,
+        appUpdater: AppUpdater,
+        foregroundSessionCoordinator: ForegroundSessionCoordinator
+    ) {
+        self.appUpdater = appUpdater
+        self.foregroundSessionCoordinator = foregroundSessionCoordinator
         self.runtime = runtime
     }
 
     func show() {
         let sourceWindow = NSApp.keyWindow
         sourceWindow?.orderOut(nil)
-        NSApp.setActivationPolicy(.regular)
+        foregroundSessionCoordinator.beginForegroundSession(reason: .settingsWindow)
         NSApp.activate(ignoringOtherApps: true)
 
         let window = makeWindowIfNeeded()
@@ -599,7 +616,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        foregroundSessionCoordinator.endForegroundSession(reason: .settingsWindow)
     }
 
     private func makeWindowIfNeeded() -> NSWindow {
@@ -607,7 +624,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             return window
         }
 
-        let contentView = SettingsView(runtime: runtime)
+        let contentView = SettingsView(appUpdater: appUpdater, runtime: runtime)
             .frame(width: 520, height: 620)
             .padding(24)
         let hostingController = NSHostingController(rootView: contentView)
@@ -615,11 +632,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let window = NSWindow(contentViewController: hostingController)
         window.title = "RemoteOS Settings"
         window.setContentSize(NSSize(width: 520, height: 620))
-        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.styleMask = NSWindow.StyleMask([.titled, .closable, .miniaturizable])
         window.titlebarAppearsTransparent = false
         window.isReleasedWhenClosed = false
-        window.level = .normal
-        window.collectionBehavior = [.moveToActiveSpace]
+        window.level = NSWindow.Level.normal
+        window.collectionBehavior = NSWindow.CollectionBehavior([.moveToActiveSpace])
         window.delegate = self
         window.center()
         window.identifier = NSUserInterfaceItemIdentifier("RemoteOSSettingsWindow")
@@ -629,6 +646,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 }
 
 struct SettingsView: View {
+    let appUpdater: AppUpdater
     @ObservedObject var runtime: HostRuntime
     @State private var controlPlaneURL = ""
     @State private var deviceName = ""
@@ -716,6 +734,21 @@ struct SettingsView: View {
                     Spacer()
                     Text(runtime.hostStatus.codex.authMode ?? "unknown")
                         .foregroundStyle(.secondary)
+                }
+            }
+
+            if appUpdater.isAvailable {
+                Section("Updates") {
+                    HStack {
+                        Text("Installed version")
+                        Spacer()
+                        Text(appUpdater.currentVersionDescription)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button("Check for Updates…") {
+                        appUpdater.checkForUpdates()
+                    }
                 }
             }
 

@@ -206,10 +206,12 @@ if [[ -n "$ICON_FILE" ]]; then
     /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string ${local_icon_name%.*}" "$INFO_PLIST_PATH"
 fi
 
+ENTITLEMENTS_FILE="$APP_DIR/Resources/RemoteOS.entitlements"
+
 if [[ -n "$SIGNING_IDENTITY" ]]; then
     if [[ "$SIGNING_IDENTITY" == Developer\ ID\ Application:* ]]; then
         echo "Signing app with Developer ID identity..."
-        codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$APP_ROOT"
+        codesign --force --timestamp --options runtime --entitlements "$ENTITLEMENTS_FILE" --sign "$SIGNING_IDENTITY" "$APP_ROOT"
     else
         if [[ "$AUTO_DETECTED_SIGNING_IDENTITY" == "1" ]]; then
             echo "Signing app with auto-detected local identity: $SIGNING_IDENTITY"

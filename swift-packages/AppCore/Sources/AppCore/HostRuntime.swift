@@ -104,10 +104,13 @@ public final class HostRuntime: ObservableObject {
         self.deviceSecretStore = deviceSecretStore
         self.openAIAPIKeyStore = openAIAPIKeyStore
         self.permissionCoordinator = permissionCoordinator
-        self.inventoryService = WindowInventoryService(permissionCoordinator: permissionCoordinator)
+        self.accessibilityService = accessibilityService
+        self.inventoryService = WindowInventoryService(
+            permissionSnapshotProvider: { permissionCoordinator.snapshot() },
+            accessibilityService: accessibilityService
+        )
         self.screenshotService = screenshotService
         self.windowStreamService = windowStreamService
-        self.accessibilityService = accessibilityService
         self.textRecognitionService = textRecognitionService
         self.inputInjector = inputInjector
         self.brokerClient = brokerClient
@@ -1009,21 +1012,7 @@ public final class HostRuntime: ObservableObject {
     }
 
     private func refreshWindowsNow() async {
-        var updatedWindows = await inventoryService.listWindows()
-
-        // SCWindow.frame can return wrong values for windows that
-        // ScreenCaptureKit can't capture per-window.  Cross-check with the
-        // Accessibility API which always returns correct bounds.
-        for i in updatedWindows.indices {
-            if let axRect = accessibilityService.windowBounds(for: updatedWindows[i]) {
-                updatedWindows[i].bounds = WindowBounds(
-                    x: axRect.origin.x,
-                    y: axRect.origin.y,
-                    width: axRect.size.width,
-                    height: axRect.size.height
-                )
-            }
-        }
+        let updatedWindows = await inventoryService.listWindows()
 
         windows = updatedWindows
 
@@ -1112,7 +1101,7 @@ public final class HostRuntime: ObservableObject {
     }
 
     private func publishSemanticDiffIfNeeded() async {
-        guard let selectedWindow = selectedWindow else {
+        guard permissions.accessibility == .granted, let selectedWindow = selectedWindow else {
             return
         }
         let snapshot = accessibilityService.snapshot(for: selectedWindow)
@@ -1155,7 +1144,10 @@ public final class HostRuntime: ObservableObject {
         guard let window = windows.first(where: { $0.id == windowID }) else {
             throw AppCoreError.missingWindow
         }
-        let windowBounds = accessibilityService.windowBounds(for: window) ?? window.bounds.asCGRect
+        let windowBounds =
+            permissions.accessibility == .granted
+            ? (accessibilityService.windowBounds(for: window) ?? window.bounds.asCGRect)
+            : window.bounds.asCGRect
         try await windowStreamService.start(
             windowID: windowID,
             topologyVersion: displayTopologyVersion,

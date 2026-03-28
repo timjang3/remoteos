@@ -122,7 +122,7 @@ struct ContentView: View {
     private var header: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("RemoteOS")
+                Text("RemoteOS v2")
                     .font(.headline)
                 Text(runtime.configuration.deviceName)
                     .font(.subheadline)

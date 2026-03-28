@@ -29,6 +29,7 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
+  --window-preview-max-block-size: 50dvh;
   color-scheme: dark;
 }
 
@@ -478,15 +479,21 @@ input, textarea {
 
 .window-preview {
   flex-shrink: 0;
-  max-height: 38vh;
+  display: grid;
+  place-items: center;
+  max-block-size: var(--window-preview-max-block-size);
   background: var(--bg);
   overflow: hidden;
   position: relative;
 }
 
 .window-preview img {
-  width: 100%;
   display: block;
+  max-inline-size: 100%;
+  max-block-size: var(--window-preview-max-block-size);
+  inline-size: auto;
+  block-size: auto;
+  object-fit: contain;
   pointer-events: none;
   -webkit-user-drag: none;
 }

@@ -36,7 +36,7 @@ const speechProvider = createSpeechTranscriptionProvider(config);
 
 await app.register(cors, {
   origin: config.authMode === "required" ? config.allowedOrigins : true,
-  credentials: config.authMode === "required"
+  credentials: true
 });
 await app.register(multipart, {
   limits: {
@@ -46,6 +46,19 @@ await app.register(multipart, {
 });
 await app.register(rateLimit);
 await app.register(websocket);
+
+app.setErrorHandler((error: Error & { statusCode?: number }, request, reply) => {
+  const statusCode = error.statusCode ?? 500;
+  request.log.error(
+    { err: error, url: request.url, method: request.method },
+    `Unhandled route error: ${error.message}`
+  );
+  reply.code(statusCode).send({
+    error: statusCode >= 500 ? "Internal Server Error" : error.message,
+    message: error.message,
+    statusCode
+  });
+});
 
 if (db) {
   await migrate(db, {

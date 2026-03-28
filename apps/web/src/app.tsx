@@ -73,6 +73,16 @@ function getModelDisplayName(modelId: string | null | undefined): string {
   return MODEL_DISPLAY[modelId] ?? modelId;
 }
 
+function base64ToObjectUrl(dataBase64: string, mimeType: string): string {
+  const binary = atob(dataBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const blob = new Blob([bytes], { type: mimeType });
+  return URL.createObjectURL(blob);
+}
+
 /**
  * Convert a base64-encoded frame to an object URL.
  * Object URLs are far cheaper for the browser to render than data URLs
@@ -80,13 +90,7 @@ function getModelDisplayName(modelId: string | null | undefined): string {
  * every img src change.
  */
 function frameToObjectUrl(frame: WindowFrame): string {
-  const binary = atob(frame.dataBase64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  const blob = new Blob([bytes], { type: frame.mimeType });
-  return URL.createObjectURL(blob);
+  return base64ToObjectUrl(frame.dataBase64, frame.mimeType);
 }
 
 /**
@@ -651,11 +655,12 @@ export function App() {
   const [isAgentStartPending, startAgentStartTransition] = useTransition();
   const [activeBrokerConnectionId, setActiveBrokerConnectionId] = useState(0);
 
+  const requiresAuth = getResolvedControlPlaneAuthMode() === "required";
   const authClient = useMemo(
-    () => createControlPlaneAuthClient(controlPlaneBaseUrl),
-    [controlPlaneBaseUrl]
+    () => requiresAuth ? createControlPlaneAuthClient(controlPlaneBaseUrl) : null,
+    [controlPlaneBaseUrl, requiresAuth]
   );
-  const session = authClient.useSession();
+  const session = authClient?.useSession() ?? { data: null, isPending: false, error: null };
   const clientRef = useRef<BrokerClient | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
@@ -672,6 +677,28 @@ export function App() {
   );
   const frameUrl = useThrottledFrameUrl(frame, !tabVisible);
   const isShowingHomeState = showHomeState && selectedWindow === null;
+
+  const scrollChatToBottom = useCallback((behavior: ScrollBehavior) => {
+    const end = chatEndRef.current;
+    if (!end) {
+      return;
+    }
+
+    const scroller = end.closest(".chat-messages");
+    if (scroller instanceof HTMLElement) {
+      if (typeof scroller.scrollTo === "function") {
+        scroller.scrollTo({
+          top: scroller.scrollHeight,
+          behavior
+        });
+      } else {
+        scroller.scrollTop = scroller.scrollHeight;
+      }
+      return;
+    }
+
+    end.scrollIntoView({ behavior });
+  }, []);
 
   useEffect(() => {
     showHomeStateRef.current = showHomeState;
@@ -732,36 +759,64 @@ export function App() {
     return () => window.removeEventListener("scroll", resetScroll);
   }, []);
 
-  // Pre-compute blob URLs for snapshot thumbnails to avoid inline base64 data URLs
+  // Maintain stable blob URLs per window snapshot. Recreating every blob URL on
+  // every incoming snapshot notification causes visible decode churn while the
+  // host publishes the deck in bursts.
   const snapshotUrlsRef = useRef<Record<number, string>>({});
-  const snapshotUrls = useMemo(() => {
-    const next: Record<number, string> = {};
+  const snapshotKeysRef = useRef<Record<number, string>>({});
+  const [snapshotUrls, setSnapshotUrls] = useState<Record<number, string>>({});
+
+  useEffect(() => {
+    let didChange = false;
+    const nextUrls = { ...snapshotUrlsRef.current };
+    const nextKeys = { ...snapshotKeysRef.current };
+
     for (const [idStr, snapshot] of Object.entries(snapshots)) {
       const id = Number(idStr);
-      // Reuse existing blob URL if the snapshot hasn't changed (same capturedAt)
-      const existing = snapshotUrlsRef.current[id];
-      if (existing) {
-        // We can't easily compare — just revoke and recreate.
-        // Snapshots update infrequently so this is fine.
-        URL.revokeObjectURL(existing);
+      const nextKey = `${snapshot.capturedAt}:${snapshot.mimeType}`;
+      if (nextKeys[id] === nextKey) {
+        continue;
       }
-      const binary = atob(snapshot.dataBase64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
+
+      const nextUrl = base64ToObjectUrl(snapshot.dataBase64, snapshot.mimeType);
+      const previousUrl = nextUrls[id];
+      nextUrls[id] = nextUrl;
+      nextKeys[id] = nextKey;
+      if (previousUrl) {
+        URL.revokeObjectURL(previousUrl);
       }
-      const blob = new Blob([bytes], { type: snapshot.mimeType });
-      next[id] = URL.createObjectURL(blob);
+      didChange = true;
     }
-    // Revoke any URLs for windows that no longer have snapshots
-    for (const [idStr, url] of Object.entries(snapshotUrlsRef.current)) {
-      if (!(Number(idStr) in next)) {
+
+    for (const [idStr, url] of Object.entries(nextUrls)) {
+      const id = Number(idStr);
+      if (id in snapshots) {
+        continue;
+      }
+      delete nextUrls[id];
+      delete nextKeys[id];
+      URL.revokeObjectURL(url);
+      didChange = true;
+    }
+
+    if (!didChange) {
+      return;
+    }
+
+    snapshotUrlsRef.current = nextUrls;
+    snapshotKeysRef.current = nextKeys;
+    setSnapshotUrls(nextUrls);
+  }, [snapshots]);
+
+  useEffect(() => {
+    return () => {
+      for (const url of Object.values(snapshotUrlsRef.current)) {
         URL.revokeObjectURL(url);
       }
-    }
-    snapshotUrlsRef.current = next;
-    return next;
-  }, [snapshots]);
+      snapshotUrlsRef.current = {};
+      snapshotKeysRef.current = {};
+    };
+  }, []);
   const selectedSnapshotUrl = selectedWindow ? (snapshotUrls[selectedWindow.id] ?? null) : null;
 
   const transcript = useMemo(
@@ -1217,10 +1272,8 @@ export function App() {
   }, [activeBrokerConnectionId]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({
-      behavior: pendingAgentSend || agentTurn?.status === "running" ? "auto" : "smooth"
-    });
-  }, [agentTurn, pendingAgentSend, transcript]);
+    scrollChatToBottom(pendingAgentSend || agentTurn?.status === "running" ? "auto" : "smooth");
+  }, [agentTurn, pendingAgentSend, scrollChatToBottom, transcript]);
 
   // Stop streaming when the tab/browser closes so the host doesn't keep capturing
   useEffect(() => {
@@ -1425,7 +1478,33 @@ export function App() {
   }
 
   function openWindowsSheet() {
+    setShowModelPicker(false);
+    setShowAccount(false);
     setShowWindows(true);
+  }
+
+  function openModelPicker() {
+    setShowWindows(false);
+    setShowAccount(false);
+    setShowModelPicker(true);
+  }
+
+  function openAccountSheet() {
+    setShowWindows(false);
+    setShowModelPicker(false);
+    setShowAccount(true);
+  }
+
+  function closeWindowsSheet() {
+    setShowWindows(false);
+  }
+
+  function closeModelPicker() {
+    setShowModelPicker(false);
+  }
+
+  function closeAccountSheet() {
+    setShowAccount(false);
   }
 
   async function handleSelectModel(modelId: string) {
@@ -1510,7 +1589,7 @@ export function App() {
               {selectedWindow ? selectedWindow.title : "RemoteOS"}
             </span>
           </div>
-          <button className="model-select-btn" onClick={() => setShowModelPicker(true)}>
+          <button className="model-select-btn" onClick={openModelPicker}>
             <span>{getModelDisplayName(codexStatus?.model)}</span>
             <ChevronDownIcon />
           </button>
@@ -1525,7 +1604,7 @@ export function App() {
             <button className="chat-header-btn" onClick={openWindowsSheet}>
               <WindowsIcon />
             </button>
-            <button className="chat-header-btn" onClick={() => setShowAccount(true)} aria-label="Account">
+            <button className="chat-header-btn" onClick={openAccountSheet} aria-label="Account">
               {requiresControlPlaneSignIn && session.data?.user ? (
                 <span className="account-btn-initial">
                   {(session.data.user.name || session.data.user.email || "U")[0]!.toUpperCase()}
@@ -1603,7 +1682,7 @@ export function App() {
               onFocus={() => {
                 // Scroll chat to bottom when keyboard opens so latest messages stay visible
                 setTimeout(() => {
-                  chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+                  scrollChatToBottom("smooth");
                 }, 300);
               }}
               onKeyDown={handleAgentKeyDown}
@@ -1692,7 +1771,7 @@ export function App() {
 
       <BottomSheet
         open={showWindows}
-        onClose={() => setShowWindows(false)}
+        onClose={closeWindowsSheet}
         title={`Windows (${windows.length})`}
       >
         {windows.length === 0 ? (
@@ -1738,7 +1817,7 @@ export function App() {
 
       <BottomSheet
         open={showModelPicker}
-        onClose={() => setShowModelPicker(false)}
+        onClose={closeModelPicker}
         title="Select Model"
       >
         <div className="model-picker-list">
@@ -1764,7 +1843,7 @@ export function App() {
 
       <BottomSheet
         open={showAccount}
-        onClose={() => setShowAccount(false)}
+        onClose={closeAccountSheet}
         title="Account"
       >
         {requiresControlPlaneSignIn && session.data?.user ? (

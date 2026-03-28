@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 type Props = {
   open: boolean;
@@ -81,7 +82,7 @@ export function BottomSheet({ open, onClose, title, children }: Props) {
     };
   }, [onClose, open]);
 
-  return (
+  const content = (
     <>
       <div
         className={`sheet-overlay ${open ? "open" : ""}`}
@@ -117,4 +118,10 @@ export function BottomSheet({ open, onClose, title, children }: Props) {
       </div>
     </>
   );
+
+  if (typeof document === "undefined") {
+    return content;
+  }
+
+  return createPortal(content, document.body);
 }

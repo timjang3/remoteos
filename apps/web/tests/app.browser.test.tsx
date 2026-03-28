@@ -539,7 +539,7 @@ describe("App browser stream lifecycle", () => {
     await flushAsync();
 
     await act(async () => {
-      container
+      document
         .querySelector<HTMLElement>(".window-item")
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });

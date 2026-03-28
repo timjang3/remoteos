@@ -124,27 +124,38 @@ export async function registerRoutes(
       }
     },
     async (request, reply) => {
-      const body = registerDeviceBodySchema.parse(request.body);
-      const registration = await store.registerDevice({
-        name: body.name,
-        mode: body.mode,
-        ...(body.existingDeviceId ? { existingDeviceId: body.existingDeviceId } : {}),
-        ...(body.existingDeviceSecret ? { existingDeviceSecret: body.existingDeviceSecret } : {}),
-        userId: request.userId ?? null,
-        ...(config.authMode === "required" ? { publicEnrollmentBaseUrl: config.publicPairBaseUrl } : {})
-      });
-      if (isPendingRegistration(registration)) {
-        return reply.send(registration);
-      }
+      try {
+        const body = registerDeviceBodySchema.parse(request.body);
+        const registration = await store.registerDevice({
+          name: body.name,
+          mode: body.mode,
+          ...(body.existingDeviceId ? { existingDeviceId: body.existingDeviceId } : {}),
+          ...(body.existingDeviceSecret ? { existingDeviceSecret: body.existingDeviceSecret } : {}),
+          userId: request.userId ?? null,
+          ...(config.authMode === "required" ? { publicEnrollmentBaseUrl: config.publicPairBaseUrl } : {})
+        });
+        if (isPendingRegistration(registration)) {
+          return reply.send(registration);
+        }
 
-      return reply.send({
-        device: registration.device,
-        deviceSecret: registration.deviceSecret,
-        wsUrl: hostWsUrl(config, {
-          deviceId: registration.device.id,
-          deviceSecret: registration.deviceSecret
-        })
-      });
+        return reply.send({
+          device: registration.device,
+          deviceSecret: registration.deviceSecret,
+          wsUrl: hostWsUrl(config, {
+            deviceId: registration.device.id,
+            deviceSecret: registration.deviceSecret
+          })
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown registration error";
+        request.log.error({ err: error, body: request.body }, `Device registration failed: ${message}`);
+        const statusCode =
+          /unauthorized/i.test(message) ? 401 :
+          /validation|parse|invalid/i.test(message) ? 400 : 500;
+        return reply.code(statusCode).send({
+          error: message
+        });
+      }
     }
   );
 
@@ -367,48 +378,59 @@ export async function registerRoutes(
         }
       },
       async (request, reply) => {
-        const body = wsTicketBodySchema.parse(request.body);
+        try {
+          const body = wsTicketBodySchema.parse(request.body);
 
-        if (body.type === "host") {
-          const device = await store.authenticateHostDevice(body.deviceId, body.deviceSecret);
-          if (!device || !device.userId) {
+          if (body.type === "host") {
+            const device = await store.authenticateHostDevice(body.deviceId, body.deviceSecret);
+            if (!device || !device.userId) {
+              return reply.code(401).send({
+                error: "Unauthorized host"
+              });
+            }
+
+            const ticket = wsTickets.mint({
+              type: "host",
+              deviceId: body.deviceId
+            });
+            return reply.send({
+              ticket: ticket.ticket,
+              expiresAt: ticket.expiresAt,
+              wsUrl: `${config.publicWsBaseUrl}/ws/host?ticket=${ticket.ticket}`
+            });
+          }
+
+          await requireAuth(request, reply);
+          if (reply.sent) {
+            return reply;
+          }
+
+          const session = await store.getClientSession(body.clientToken);
+          if (!session || (request.userId && session.userId && session.userId !== request.userId)) {
             return reply.code(401).send({
-              error: "Unauthorized host"
+              error: "Unauthorized client"
             });
           }
 
           const ticket = wsTickets.mint({
-            type: "host",
-            deviceId: body.deviceId
+            type: "client",
+            clientToken: body.clientToken
           });
-          return reply.send({
-            ticket: ticket.ticket,
-            expiresAt: ticket.expiresAt,
-            wsUrl: `${config.publicWsBaseUrl}/ws/host?ticket=${ticket.ticket}`
-          });
-        }
-
-        await requireAuth(request, reply);
-        if (reply.sent) {
-          return reply;
-        }
-
-        const session = await store.getClientSession(body.clientToken);
-        if (!session || (request.userId && session.userId && session.userId !== request.userId)) {
-          return reply.code(401).send({
-            error: "Unauthorized client"
-          });
-        }
-
-        const ticket = wsTickets.mint({
-          type: "client",
-          clientToken: body.clientToken
-        });
         return reply.send({
           ticket: ticket.ticket,
           expiresAt: ticket.expiresAt,
           wsUrl: `${config.publicWsBaseUrl}/ws/client?ticket=${ticket.ticket}`
         });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown ticket error";
+          request.log.error({ err: error }, `WebSocket ticket failed: ${message}`);
+          const statusCode =
+            /unauthorized/i.test(message) ? 401 :
+            /validation|parse|invalid/i.test(message) ? 400 : 500;
+          return reply.code(statusCode).send({
+            error: message
+          });
+        }
       }
     );
   }

@@ -175,17 +175,58 @@ function HostedEnrollmentView({
   );
 }
 
-export function AuthGate({ children }: AuthGateProps) {
-  const [baseUrl, setBaseUrl] = useState(() => resolveControlPlaneBaseUrl());
-  const [authMode, setAuthMode] = useState<ControlPlaneAuthMode | null>(null);
-  const [googleAuthEnabled, setGoogleAuthEnabled] = useState(false);
-  const [healthError, setHealthError] = useState<string | null>(null);
-  const authClient = useMemo(() => createControlPlaneAuthClient(baseUrl), [baseUrl]);
+function AuthRequiredGate({
+  authClient,
+  baseUrl,
+  googleAuthEnabled,
+  children
+}: {
+  authClient: ControlPlaneAuthClient;
+  baseUrl: string;
+  googleAuthEnabled: boolean;
+  children: React.ReactNode;
+}) {
   const session = authClient.useSession();
   const enrollmentToken =
     typeof window !== "undefined"
       ? new URLSearchParams(window.location.search).get("enroll")
       : null;
+
+  if (session.isPending) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <RemoteOSBrandHeader className="auth-brand" title="RemoteOS" />
+          <div style={{ display: "flex", justifyContent: "center", padding: "8px 0" }}>
+            <div className="auth-loading-spinner" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!session.data) {
+    return <LoginForm authClient={authClient} googleAuthEnabled={googleAuthEnabled} />;
+  }
+
+  if (enrollmentToken) {
+    return (
+      <HostedEnrollmentView
+        authClient={authClient}
+        baseUrl={baseUrl}
+        enrollmentToken={enrollmentToken}
+      />
+    );
+  }
+
+  return <>{children}</>;
+}
+
+export function AuthGate({ children }: AuthGateProps) {
+  const [baseUrl, setBaseUrl] = useState(() => resolveControlPlaneBaseUrl());
+  const [authMode, setAuthMode] = useState<ControlPlaneAuthMode | null>(null);
+  const [googleAuthEnabled, setGoogleAuthEnabled] = useState(false);
+  const [healthError, setHealthError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -243,32 +284,11 @@ export function AuthGate({ children }: AuthGateProps) {
     return <>{children}</>;
   }
 
-  if (session.isPending) {
-    return (
-      <div className="auth-screen">
-        <div className="auth-card">
-          <RemoteOSBrandHeader className="auth-brand" title="RemoteOS" />
-          <div style={{ display: "flex", justifyContent: "center", padding: "8px 0" }}>
-            <div className="auth-loading-spinner" />
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const authClient = createControlPlaneAuthClient(baseUrl);
 
-  if (!session.data) {
-    return <LoginForm authClient={authClient} googleAuthEnabled={googleAuthEnabled} />;
-  }
-
-  if (enrollmentToken) {
-    return (
-      <HostedEnrollmentView
-        authClient={authClient}
-        baseUrl={baseUrl}
-        enrollmentToken={enrollmentToken}
-      />
-    );
-  }
-
-  return <>{children}</>;
+  return (
+    <AuthRequiredGate authClient={authClient} baseUrl={baseUrl} googleAuthEnabled={googleAuthEnabled}>
+      {children}
+    </AuthRequiredGate>
+  );
 }

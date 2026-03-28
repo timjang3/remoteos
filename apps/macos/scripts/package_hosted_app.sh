@@ -29,6 +29,8 @@ HOST_MODE="${REMOTEOS_HOST_MODE:-hosted}"
 MINIMUM_MACOS_VERSION="${REMOTEOS_MINIMUM_MACOS_VERSION:-14.0}"
 ARCHS="${REMOTEOS_ARCHS:-}"
 ICON_FILE="${REMOTEOS_ICON_FILE:-}"
+SPARKLE_FEED_URL="${REMOTEOS_SPARKLE_FEED_URL:-https://timjang3.github.io/remoteos/appcast.xml}"
+SPARKLE_PUBLIC_ED_KEY="${REMOTEOS_SPARKLE_PUBLIC_ED_KEY:-}"
 
 SIGNING_IDENTITY="${REMOTEOS_SIGNING_IDENTITY:-}"
 AUTO_DETECTED_SIGNING_IDENTITY=0
@@ -109,6 +111,84 @@ function notarize_file() {
     echo "Skipping notarization for $file_path because no notarytool credentials were provided."
 }
 
+function resolve_sparkle_framework_path() {
+    local candidate=""
+
+    for candidate in \
+        "$PRODUCTS_DIR/PackageFrameworks/Sparkle.framework" \
+        "$PRODUCTS_DIR/Sparkle.framework"
+    do
+        if [[ -d "$candidate" ]]; then
+            print -- "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+function resolve_framework_version_path() {
+    local framework_path="$1"
+    local current_target=""
+    local version_dir=""
+
+    if [[ -L "$framework_path/Versions/Current" ]]; then
+        current_target="$(readlink "$framework_path/Versions/Current")"
+        if [[ -n "$current_target" && -d "$framework_path/Versions/$current_target" ]]; then
+            print -- "$framework_path/Versions/$current_target"
+            return 0
+        fi
+    fi
+
+    for version_dir in "$framework_path"/Versions/*; do
+        [[ -d "$version_dir" ]] || continue
+        [[ "$(basename "$version_dir")" == "Current" ]] && continue
+        print -- "$version_dir"
+        return 0
+    done
+
+    return 1
+}
+
+function codesign_path() {
+    local item_path="$1"
+    shift || true
+
+    if [[ -n "$SIGNING_IDENTITY" ]]; then
+        codesign --force "${CODESIGN_ARGS[@]}" "$@" --sign "$SIGNING_IDENTITY" "$item_path"
+    else
+        codesign --force "$@" --sign - "$item_path"
+    fi
+}
+
+function sign_sparkle_framework() {
+    local framework_path="$1"
+    local version_path=""
+
+    version_path="$(resolve_framework_version_path "$framework_path")" || {
+        echo "Unable to resolve Sparkle.framework version directory." >&2
+        exit 1
+    }
+
+    if [[ -d "$version_path/XPCServices/Installer.xpc" ]]; then
+        codesign_path "$version_path/XPCServices/Installer.xpc"
+    fi
+
+    if [[ -d "$version_path/XPCServices/Downloader.xpc" ]]; then
+        codesign_path "$version_path/XPCServices/Downloader.xpc" --preserve-metadata=entitlements
+    fi
+
+    if [[ -f "$version_path/Autoupdate" ]]; then
+        codesign_path "$version_path/Autoupdate"
+    fi
+
+    if [[ -d "$version_path/Updater.app" ]]; then
+        codesign_path "$version_path/Updater.app"
+    fi
+
+    codesign_path "$framework_path"
+}
+
 require_command xcodebuild
 require_command plutil
 require_command /usr/libexec/PlistBuddy
@@ -183,6 +263,8 @@ fi
 PRODUCTS_DIR="$DERIVED_DATA_PATH/Build/Products/Release"
 EXECUTABLE_PATH="$PRODUCTS_DIR/RemoteOSHost"
 RESOURCE_BUNDLE_PATH="$PRODUCTS_DIR/RemoteOSHost_RemoteOSHost.bundle"
+SPARKLE_FRAMEWORK_SOURCE="$(resolve_sparkle_framework_path || true)"
+SPARKLE_FRAMEWORK_DEST="$APP_ROOT/Contents/Frameworks/Sparkle.framework"
 
 if [[ ! -f "$EXECUTABLE_PATH" ]]; then
     echo "Expected executable was not found at $EXECUTABLE_PATH" >&2
@@ -194,10 +276,17 @@ if [[ ! -d "$RESOURCE_BUNDLE_PATH" ]]; then
     exit 1
 fi
 
-mkdir -p "$APP_ROOT/Contents/MacOS" "$APP_ROOT/Contents/Resources"
+if [[ -z "$SPARKLE_FRAMEWORK_SOURCE" || ! -d "$SPARKLE_FRAMEWORK_SOURCE" ]]; then
+    echo "Expected Sparkle.framework was not found in build products." >&2
+    exit 1
+fi
+
+mkdir -p "$APP_ROOT/Contents/MacOS" "$APP_ROOT/Contents/Resources" "$APP_ROOT/Contents/Frameworks"
 cp "$EXECUTABLE_PATH" "$APP_ROOT/Contents/MacOS/$APP_NAME"
 chmod 755 "$APP_ROOT/Contents/MacOS/$APP_NAME"
+install_name_tool -add_rpath @executable_path/../Frameworks "$APP_ROOT/Contents/MacOS/$APP_NAME"
 cp -R "$RESOURCE_BUNDLE_PATH" "$APP_ROOT/Contents/Resources/"
+ditto "$SPARKLE_FRAMEWORK_SOURCE" "$SPARKLE_FRAMEWORK_DEST"
 
 DEFAULTS_PATH="$APP_ROOT/Contents/Resources/$(basename "$RESOURCE_BUNDLE_PATH")/Contents/Resources/DefaultConfiguration.plist"
 rm -f "$DEFAULTS_PATH"
@@ -221,6 +310,16 @@ plutil -create xml1 "$INFO_PLIST_PATH"
 /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$INFO_PLIST_PATH"
 /usr/libexec/PlistBuddy -c "Add :NSHighResolutionCapable bool true" "$INFO_PLIST_PATH"
 
+if [[ -n "$SPARKLE_PUBLIC_ED_KEY" ]]; then
+    /usr/libexec/PlistBuddy -c "Add :SUFeedURL string $SPARKLE_FEED_URL" "$INFO_PLIST_PATH"
+    /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_ED_KEY" "$INFO_PLIST_PATH"
+    /usr/libexec/PlistBuddy -c "Add :SUEnableAutomaticChecks bool true" "$INFO_PLIST_PATH"
+    /usr/libexec/PlistBuddy -c "Add :SUAutomaticallyUpdate bool false" "$INFO_PLIST_PATH"
+    /usr/libexec/PlistBuddy -c "Add :SUVerifyUpdateBeforeExtraction bool true" "$INFO_PLIST_PATH"
+else
+    echo "Skipping Sparkle feed configuration because REMOTEOS_SPARKLE_PUBLIC_ED_KEY is not set."
+fi
+
 if [[ -n "$ICON_FILE" ]]; then
     if [[ ! -f "$ICON_FILE" ]]; then
         echo "REMOTEOS_ICON_FILE points to a missing file: $ICON_FILE" >&2
@@ -238,24 +337,33 @@ if [[ -f "$ENTITLEMENTS_FILE" ]] && /usr/libexec/PlistBuddy -c "Print" "$ENTITLE
     ENTITLEMENTS_FLAG=(--entitlements "$ENTITLEMENTS_FILE")
 fi
 
+CODESIGN_ARGS=()
+
 if [[ -n "$SIGNING_IDENTITY" ]]; then
     if [[ "$SIGNING_IDENTITY" == Developer\ ID\ Application:* ]]; then
         echo "Signing app with Developer ID identity..."
-        codesign --force --timestamp --options runtime "${ENTITLEMENTS_FLAG[@]}" --sign "$SIGNING_IDENTITY" "$APP_ROOT"
+        CODESIGN_ARGS=(--timestamp --options runtime)
     else
         if [[ "$AUTO_DETECTED_SIGNING_IDENTITY" == "1" ]]; then
             echo "Signing app with auto-detected local identity: $SIGNING_IDENTITY"
         else
             echo "Signing app with identity: $SIGNING_IDENTITY"
         fi
-        codesign --force --sign "$SIGNING_IDENTITY" "$APP_ROOT"
     fi
 else
     echo "No signing identity provided. Applying ad-hoc signing for local verification only."
     echo "Warning: ad-hoc signing changes the app's code requirement on rebuilds, so macOS may invalidate Accessibility and Screen Recording grants after each packaged build."
-    codesign --force --sign - "$APP_ROOT"
 fi
 
+if [[ ! -d "$SPARKLE_FRAMEWORK_DEST" ]]; then
+    echo "Expected embedded Sparkle.framework was not found at $SPARKLE_FRAMEWORK_DEST" >&2
+    exit 1
+fi
+
+sign_sparkle_framework "$SPARKLE_FRAMEWORK_DEST"
+codesign_path "$APP_ROOT" "${ENTITLEMENTS_FLAG[@]}"
+
+codesign --verify --strict --verbose=2 "$SPARKLE_FRAMEWORK_DEST"
 codesign --verify --deep --strict --verbose=2 "$APP_ROOT"
 
 echo "Creating ZIP artifact..."

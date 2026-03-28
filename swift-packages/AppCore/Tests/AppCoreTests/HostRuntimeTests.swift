@@ -83,6 +83,12 @@ private func makeDeviceSecretStore(
 }
 
 @MainActor
+@Test func previewFrameDefaultsMatchTheLiveStreamBudget() async throws {
+    #expect(HostRuntime.previewFrameMaxPixelSize == WindowStreamService.maxStreamLongEdgePixels)
+    #expect(HostRuntime.previewFrameCompressionQuality == 0.72)
+}
+
+@MainActor
 @Test func ensureDeviceRegistrationReusesInFlightRequest() async throws {
     let suiteName = "HostRuntimeTests-\(UUID().uuidString)"
     let keychainService = "HostRuntimeInFlight-\(UUID().uuidString)"

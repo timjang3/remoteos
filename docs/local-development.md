@@ -28,7 +28,7 @@ pnpm --filter @remoteos/web dev
 swift run --package-path apps/macos
 ```
 
-The macOS app will prompt for **Screen Recording** and **Accessibility** permissions on first launch.
+The macOS app shows **Screen Recording** and **Accessibility** enable controls on first launch. Permission prompts open only when the user explicitly requests them from the app.
 
 ## Testing from Your Phone (LAN)
 

@@ -12,18 +12,22 @@ public final class AccessibilityService: @unchecked Sendable {
     }
 
     private let log = AppLogs.accessibility
+    private let isTrustedProvider: @Sendable () -> Bool
 
-    public init() {}
+    public convenience init() {
+        self.init(isTrustedProvider: { AXIsProcessTrusted() })
+    }
+
+    init(isTrustedProvider: @escaping @Sendable () -> Bool) {
+        self.isTrustedProvider = isTrustedProvider
+    }
 
     public func snapshot(for window: WindowDescriptor) -> SemanticSnapshot {
+        guard isTrustedProvider() else {
+            return unavailableSnapshot(forWindowID: window.id)
+        }
         guard let windowElement = windowElement(for: window) else {
-            return SemanticSnapshot(
-                windowId: window.id,
-                focused: nil,
-                elements: [],
-                summary: "No accessibility content was available for this window.",
-                generatedAt: isoNow()
-            )
+            return unavailableSnapshot(forWindowID: window.id)
         }
 
         let focused = focusedElement(for: window).flatMap(readElement)
@@ -46,6 +50,9 @@ public final class AccessibilityService: @unchecked Sendable {
     }
 
     public func press(label: String, in window: WindowDescriptor) -> Bool {
+        guard isTrustedProvider() else {
+            return false
+        }
         guard let windowElement = windowElement(for: window) else {
             return false
         }
@@ -62,6 +69,9 @@ public final class AccessibilityService: @unchecked Sendable {
     }
 
     public func type(text: String, into label: String, in window: WindowDescriptor) -> Bool {
+        guard isTrustedProvider() else {
+            return false
+        }
         guard let windowElement = windowElement(for: window) else {
             return false
         }
@@ -73,6 +83,9 @@ public final class AccessibilityService: @unchecked Sendable {
 
     @discardableResult
     public func focus(window: WindowDescriptor) -> Bool {
+        guard isTrustedProvider() else {
+            return false
+        }
         guard let app = NSRunningApplication(processIdentifier: pid_t(window.ownerPid)) else {
             return false
         }
@@ -91,6 +104,9 @@ public final class AccessibilityService: @unchecked Sendable {
     }
 
     public func isFocused(window: WindowDescriptor) -> Bool {
+        guard isTrustedProvider() else {
+            return false
+        }
         guard let focused = focusedWindowElement(for: window.ownerPid) else {
             return false
         }
@@ -101,6 +117,9 @@ public final class AccessibilityService: @unchecked Sendable {
     }
 
     public func focusedWindowDescriptor(pid: Int, knownWindows: [WindowDescriptor]) -> WindowDescriptor? {
+        guard isTrustedProvider() else {
+            return nil
+        }
         guard let focused = focusedWindowElement(for: pid) else {
             return nil
         }
@@ -111,6 +130,9 @@ public final class AccessibilityService: @unchecked Sendable {
     /// even when ScreenCaptureKit can't capture the window).  Coordinates are
     /// in the Quartz display coordinate space.
     public func windowBounds(for window: WindowDescriptor) -> CGRect? {
+        guard isTrustedProvider() else {
+            return nil
+        }
         guard let element = windowElement(for: window) else { return nil }
         guard let position = pointAttribute(kAXPositionAttribute as CFString, element: element),
               let size = sizeAttribute(kAXSizeAttribute as CFString, element: element) else { return nil }
@@ -118,6 +140,9 @@ public final class AccessibilityService: @unchecked Sendable {
     }
 
     public func windowElement(for window: WindowDescriptor) -> AXUIElement? {
+        guard isTrustedProvider() else {
+            return nil
+        }
         let appElement = AXUIElementCreateApplication(pid_t(window.ownerPid))
         var windowsValue: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsValue) == .success else {
@@ -126,6 +151,16 @@ public final class AccessibilityService: @unchecked Sendable {
 
         let windows = (windowsValue as? [AXUIElement]) ?? []
         return windows.first(where: { matches(windowElement: $0, descriptor: window) })
+    }
+
+    private func unavailableSnapshot(forWindowID windowID: Int) -> SemanticSnapshot {
+        SemanticSnapshot(
+            windowId: windowID,
+            focused: nil,
+            elements: [],
+            summary: "No accessibility content was available for this window.",
+            generatedAt: isoNow()
+        )
     }
 
     private func focusedElement(for window: WindowDescriptor) -> AXUIElement? {

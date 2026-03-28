@@ -2,6 +2,13 @@
 
 set -euo pipefail
 
+DEV_MODE=0
+for arg in "$@"; do
+    case "$arg" in
+        --dev) DEV_MODE=1 ;;
+    esac
+done
+
 ROOT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
 APP_DIR="$ROOT_DIR/apps/macos"
 DIST_DIR="${REMOTEOS_DIST_DIR:-$ROOT_DIR/dist/macos-hosted}"
@@ -9,6 +16,11 @@ DERIVED_DATA_PATH="${REMOTEOS_DERIVED_DATA_PATH:-$ROOT_DIR/DerivedData/remoteos-
 
 APP_NAME="${REMOTEOS_APP_NAME:-RemoteOS}"
 BUNDLE_IDENTIFIER="${REMOTEOS_BUNDLE_IDENTIFIER:-dev.remoteos.hosted}"
+
+if [[ "$DEV_MODE" == "1" ]]; then
+    APP_NAME="${APP_NAME} (Dev)"
+    BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER}.dev"
+fi
 VERSION="${REMOTEOS_VERSION:-0.1.0}"
 VERSION="${VERSION#v}"
 BUILD_NUMBER="${REMOTEOS_BUILD_NUMBER:-$(date '+%Y%m%d%H%M')}"

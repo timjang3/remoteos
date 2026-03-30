@@ -12,16 +12,20 @@ let package = Package(
             targets: ["AppCore"]
         )
     ],
+    dependencies: [
+        .package(path: "../RemoteOSCore")
+    ],
     targets: [
         .target(
             name: "AppCore",
+            dependencies: ["RemoteOSCore"],
             linkerSettings: [
                 .linkedLibrary("sqlite3")
             ]
         ),
         .testTarget(
             name: "AppCoreTests",
-            dependencies: ["AppCore"]
+            dependencies: ["AppCore", "RemoteOSCore"]
         )
     ]
 )

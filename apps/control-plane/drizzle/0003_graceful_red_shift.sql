@@ -1,0 +1,1 @@
+ALTER TABLE "pairings" ADD COLUMN "control_plane_base_url" text NOT NULL;

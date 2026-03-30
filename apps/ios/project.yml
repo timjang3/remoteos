@@ -1,0 +1,109 @@
+name: RemoteOSMobile
+
+options:
+  createIntermediateGroups: true
+  defaultConfig: Debug
+  deploymentTarget:
+    iOS: "17.0"
+
+packages:
+  RemoteOSCore:
+    path: ../../swift-packages/RemoteOSCore
+
+targets:
+  RemoteOSMobile:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources/RemoteOSMobile
+        excludes:
+          - Resources/Assets.xcassets
+    dependencies:
+      - package: RemoteOSCore
+        product: RemoteOSCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.remoteos.mobile
+        PRODUCT_NAME: RemoteOSMobile
+        SWIFT_VERSION: 6.0
+        SWIFT_ENABLE_EXPLICIT_MODULES: NO
+        SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../swift-packages/RemoteOSCore/build/Release-$(PLATFORM_NAME)
+        SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+        EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
+        TARGETED_DEVICE_FAMILY: 1,2
+        SUPPORTS_MACCATALYST: NO
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+    info:
+      path: Sources/RemoteOSMobile/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: RemoteOS
+        UILaunchScreen: {}
+        UIApplicationSupportsIndirectInputEvents: true
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSCameraUsageDescription: Scan pairing QR codes displayed by your Mac.
+        NSMicrophoneUsageDescription: Record dictation prompts to send to your Mac.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: com.remoteos.mobile.auth
+            CFBundleURLSchemes:
+              - remoteos
+  RemoteOSMobileTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Tests/RemoteOSMobileTests
+    dependencies:
+      - target: RemoteOSMobile
+      - package: RemoteOSCore
+        product: RemoteOSCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.remoteos.mobile.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: 6.0
+        SWIFT_ENABLE_EXPLICIT_MODULES: NO
+        SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../swift-packages/RemoteOSCore/build/Release-$(PLATFORM_NAME)
+        SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+        EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
+  RemoteOSMobileUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: UITests/RemoteOSMobileUITests
+    dependencies:
+      - target: RemoteOSMobile
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.remoteos.mobile.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: 6.0
+        SWIFT_ENABLE_EXPLICIT_MODULES: NO
+        SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../swift-packages/RemoteOSCore/build/Release-$(PLATFORM_NAME)
+        SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+        EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
+
+schemes:
+  RemoteOSMobile:
+    build:
+      targets:
+        RemoteOSMobile: all
+        RemoteOSMobileTests: [test]
+        RemoteOSMobileUITests: [test]
+    test:
+      gatherCoverageData: true
+      targets:
+        - name: RemoteOSMobileTests
+        - name: RemoteOSMobileUITests

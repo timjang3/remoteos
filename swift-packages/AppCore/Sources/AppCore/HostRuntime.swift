@@ -47,7 +47,7 @@ public final class HostRuntime: ObservableObject {
     private let textRecognitionService: TextRecognitionService
     private let inputInjector: InputEventInjector
     private let auditStore: AuditStore
-    private let brokerClient: BrokerClient
+    private let brokerClient: HostBrokerConnection
     private let urlSession: URLSession
     private let computerUseService: OpenAIComputerUseService
     private let codexClient: CodexAppServerClient
@@ -87,7 +87,7 @@ public final class HostRuntime: ObservableObject {
         accessibilityService: AccessibilityService = AccessibilityService(),
         textRecognitionService: TextRecognitionService = TextRecognitionService(),
         inputInjector: InputEventInjector = InputEventInjector(),
-        brokerClient: BrokerClient = BrokerClient(),
+        brokerClient: HostBrokerConnection = HostBrokerConnection(),
         urlSession: URLSession = .shared
     ) throws {
         var configuration = configurationStore.load()

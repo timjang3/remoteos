@@ -39,6 +39,7 @@ describe("MemoryBrokerStore", () => {
         deviceId: registration.deviceId,
         deviceSecret: registration.deviceSecret,
         publicPairBaseUrl: "http://localhost:5173",
+        publicHttpBaseUrl: "http://localhost:8787",
         requireOwnership: true
       })
     ).rejects.toThrow("Device approval required");
@@ -67,6 +68,7 @@ describe("MemoryBrokerStore", () => {
       deviceId: registration.deviceId,
       deviceSecret: registration.deviceSecret,
       publicPairBaseUrl: "http://localhost:5173",
+      publicHttpBaseUrl: "http://localhost:8787",
       requireOwnership: true
     });
 
@@ -88,6 +90,7 @@ describe("MemoryBrokerStore", () => {
       deviceId: registration.device.id,
       deviceSecret: registration.deviceSecret,
       publicPairBaseUrl: "http://localhost:5173",
+      publicHttpBaseUrl: "http://localhost:8787",
     });
 
     const claimed = await store.claimPairing(pairing.pairingCode, "iPhone");
@@ -139,6 +142,7 @@ describe("MemoryBrokerStore", () => {
       deviceId: registration.device.id,
       deviceSecret: registration.deviceSecret,
       publicPairBaseUrl: "http://localhost:5173",
+      publicHttpBaseUrl: "http://localhost:8787",
     });
     const claimed = await store.claimPairing(pairing.pairingCode, "iPhone");
 
@@ -198,7 +202,7 @@ describe("MemoryBrokerStore", () => {
     expect(device?.windows[0]?.appBundleId).toBeNull();
   });
 
-  it("generates a pairing URL with only the pairing code", async () => {
+  it("generates a pairing URL with both the pairing code and control-plane base URL", async () => {
     const store = new MemoryBrokerStore();
     const registration = await store.registerDevice({
       name: "Tim's MacBook",
@@ -212,11 +216,12 @@ describe("MemoryBrokerStore", () => {
       deviceId: registration.device.id,
       deviceSecret: registration.deviceSecret,
       publicPairBaseUrl: "http://192.168.0.115:5173",
+      publicHttpBaseUrl: "http://192.168.0.115:8787",
     });
 
     const url = new URL(pairing.pairingUrl);
     expect(url.searchParams.get("code")).toBe(pairing.pairingCode);
-    expect(url.searchParams.has("api")).toBe(false);
+    expect(url.searchParams.get("api")).toBe("http://192.168.0.115:8787");
   });
 
   it("keeps the latest client socket attached when an older socket closes", async () => {
@@ -232,6 +237,7 @@ describe("MemoryBrokerStore", () => {
       deviceId: registration.device.id,
       deviceSecret: registration.deviceSecret,
       publicPairBaseUrl: "http://localhost:5173",
+      publicHttpBaseUrl: "http://localhost:8787",
     });
     const claimed = await store.claimPairing(pairing.pairingCode, "iPhone");
 
@@ -301,6 +307,7 @@ describe("MemoryBrokerStore", () => {
       deviceId: registration.device.id,
       deviceSecret: registration.deviceSecret,
       publicPairBaseUrl: "http://localhost:5173",
+      publicHttpBaseUrl: "http://localhost:8787",
     });
     const claimed = await store.claimPairing(pairing.pairingCode, "iPhone");
 

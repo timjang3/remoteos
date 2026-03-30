@@ -12,6 +12,7 @@ describe("loadConfig", () => {
     expect(config.host).toBe("0.0.0.0");
     expect(config.publicHttpBaseUrl).toBe("http://192.168.1.25:8787");
     expect(config.publicWsBaseUrl).toBe("ws://192.168.1.25:8787");
+    expect(config.mobileAuthRedirectSchemes).toEqual(["remoteos"]);
     expect(config.trustProxy).toBe(false);
   });
 
@@ -112,5 +113,18 @@ describe("loadConfig", () => {
     expect(config.speech.model).toBe("gpt-4o-mini-transcribe");
     expect(config.speech.maxDurationMs).toBe(120000);
     expect(config.speech.maxUploadBytes).toBe(10485760);
+  });
+
+  it("parses allowed mobile auth redirect schemes", () => {
+    const config = loadConfig({
+      PORT: "8787",
+      PUBLIC_PAIR_BASE_URL: "http://localhost:5173",
+      MOBILE_AUTH_REDIRECT_SCHEMES: "remoteos,remoteos-preview"
+    });
+
+    expect(config.mobileAuthRedirectSchemes).toEqual([
+      "remoteos",
+      "remoteos-preview"
+    ]);
   });
 });

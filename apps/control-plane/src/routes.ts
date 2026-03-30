@@ -176,6 +176,7 @@ export async function registerRoutes(
           deviceId: body.deviceId,
           deviceSecret: body.deviceSecret,
           publicPairBaseUrl: config.publicPairBaseUrl,
+          publicHttpBaseUrl: config.publicHttpBaseUrl,
           userId: request.userId ?? null,
           requireOwnership: config.authMode === "required"
         });

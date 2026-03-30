@@ -68,7 +68,11 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
       claimed: row.claimed,
       createdAt: row.createdAt.toISOString(),
       expiresAt: row.expiresAt.toISOString(),
-      pairingUrl: this.buildPairingUrl(row.pairingBaseUrl, pairingCode)
+      pairingUrl: this.buildPairingUrl(
+        row.pairingBaseUrl,
+        row.controlPlaneBaseUrl,
+        pairingCode
+      )
     };
   }
 
@@ -394,6 +398,7 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
     deviceId: string;
     deviceSecret: string;
     publicPairBaseUrl: string;
+    publicHttpBaseUrl: string;
     userId?: string | null;
     requireOwnership?: boolean;
   }) {
@@ -422,7 +427,8 @@ export class PostgresBrokerStore extends BrokerRuntimeState implements BrokerSto
         clientName: null,
         expiresAt: new Date(Date.now() + 1000 * 60 * 15),
         createdAt: new Date(),
-        pairingBaseUrl: input.publicPairBaseUrl
+        pairingBaseUrl: input.publicPairBaseUrl,
+        controlPlaneBaseUrl: input.publicHttpBaseUrl
       })
       .returning();
 

@@ -1,0 +1,89 @@
+{
+  "": {
+    "swift-dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/master.swiftdeps"
+  },
+  "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/Sources/RemoteOSCore/Broker/BrokerOutboundQueue.swift": {
+    "dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/BrokerOutboundQueue.d",
+    "object": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/BrokerOutboundQueue.swift.o",
+    "swiftmodule": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/BrokerOutboundQueue~partial.swiftmodule",
+    "swift-dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/BrokerOutboundQueue.swiftdeps",
+    "diagnostics": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/BrokerOutboundQueue.dia"
+  },
+  "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/Sources/RemoteOSCore/Broker/ClientBrokerConnection.swift": {
+    "dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/ClientBrokerConnection.d",
+    "object": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/ClientBrokerConnection.swift.o",
+    "swiftmodule": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/ClientBrokerConnection~partial.swiftmodule",
+    "swift-dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/ClientBrokerConnection.swiftdeps",
+    "diagnostics": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/ClientBrokerConnection.dia"
+  },
+  "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/Sources/RemoteOSCore/Broker/WebSocketTransport.swift": {
+    "dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/WebSocketTransport.d",
+    "object": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/WebSocketTransport.swift.o",
+    "swiftmodule": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/WebSocketTransport~partial.swiftmodule",
+    "swift-dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/WebSocketTransport.swiftdeps",
+    "diagnostics": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/WebSocketTransport.dia"
+  },
+  "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/Sources/RemoteOSCore/HTTP/ControlPlaneHTTPClient.swift": {
+    "dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/ControlPlaneHTTPClient.d",
+    "object": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/ControlPlaneHTTPClient.swift.o",
+    "swiftmodule": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/ControlPlaneHTTPClient~partial.swiftmodule",
+    "swift-dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/ControlPlaneHTTPClient.swiftdeps",
+    "diagnostics": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/ControlPlaneHTTPClient.dia"
+  },
+  "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/Sources/RemoteOSCore/HTTP/PairingLinkParser.swift": {
+    "dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/PairingLinkParser.d",
+    "object": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/PairingLinkParser.swift.o",
+    "swiftmodule": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/PairingLinkParser~partial.swiftmodule",
+    "swift-dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/PairingLinkParser.swiftdeps",
+    "diagnostics": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/PairingLinkParser.dia"
+  },
+  "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/Sources/RemoteOSCore/Models/RemoteOSModels.swift": {
+    "dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/RemoteOSModels.d",
+    "object": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/RemoteOSModels.swift.o",
+    "swiftmodule": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/RemoteOSModels~partial.swiftmodule",
+    "swift-dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/RemoteOSModels.swiftdeps",
+    "diagnostics": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/RemoteOSModels.dia"
+  },
+  "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/Sources/RemoteOSCore/Persistence/ClientSessionStore.swift": {
+    "dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/ClientSessionStore.d",
+    "object": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/ClientSessionStore.swift.o",
+    "swiftmodule": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/ClientSessionStore~partial.swiftmodule",
+    "swift-dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/ClientSessionStore.swiftdeps",
+    "diagnostics": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/ClientSessionStore.dia"
+  },
+  "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/Sources/RemoteOSCore/Persistence/KeychainTokenStore.swift": {
+    "dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/KeychainTokenStore.d",
+    "object": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/KeychainTokenStore.swift.o",
+    "swiftmodule": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/KeychainTokenStore~partial.swiftmodule",
+    "swift-dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/KeychainTokenStore.swiftdeps",
+    "diagnostics": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/KeychainTokenStore.dia"
+  },
+  "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/Sources/RemoteOSCore/RPC/JSONRPC.swift": {
+    "dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/JSONRPC.d",
+    "object": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/JSONRPC.swift.o",
+    "swiftmodule": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/JSONRPC~partial.swiftmodule",
+    "swift-dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/JSONRPC.swiftdeps",
+    "diagnostics": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/JSONRPC.dia"
+  },
+  "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/Sources/RemoteOSCore/RPC/JSONValue.swift": {
+    "dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/JSONValue.d",
+    "object": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/JSONValue.swift.o",
+    "swiftmodule": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/JSONValue~partial.swiftmodule",
+    "swift-dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/JSONValue.swiftdeps",
+    "diagnostics": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/JSONValue.dia"
+  },
+  "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/Sources/RemoteOSCore/Utilities/Errors.swift": {
+    "dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/Errors.d",
+    "object": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/Errors.swift.o",
+    "swiftmodule": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/Errors~partial.swiftmodule",
+    "swift-dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/Errors.swiftdeps",
+    "diagnostics": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/Errors.dia"
+  },
+  "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/Sources/RemoteOSCore/Utilities/Logging.swift": {
+    "dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/Logging.d",
+    "object": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/Logging.swift.o",
+    "swiftmodule": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/Logging~partial.swiftmodule",
+    "swift-dependencies": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/Logging.swiftdeps",
+    "diagnostics": "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/Logging.dia"
+  }
+}

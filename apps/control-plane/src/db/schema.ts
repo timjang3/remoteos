@@ -72,7 +72,8 @@ export const pairings = pgTable(
       mode: "date",
       withTimezone: true
     }).notNull(),
-    pairingBaseUrl: text("pairing_base_url").notNull()
+    pairingBaseUrl: text("pairing_base_url").notNull(),
+    controlPlaneBaseUrl: text("control_plane_base_url").notNull()
   },
   (table) => [
     uniqueIndex("pairings_pairing_code_hash_idx").on(table.pairingCodeHash),

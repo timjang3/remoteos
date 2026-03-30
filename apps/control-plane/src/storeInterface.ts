@@ -93,6 +93,7 @@ export interface BrokerStore {
     deviceId: string;
     deviceSecret: string;
     publicPairBaseUrl: string;
+    publicHttpBaseUrl: string;
     userId?: string | null;
     requireOwnership?: boolean;
   }): Promise<PairingSession>;

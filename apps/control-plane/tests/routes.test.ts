@@ -61,6 +61,7 @@ async function createClaimedClient(store: MemoryBrokerStore, userId?: string) {
     deviceId: registration.device.id,
     deviceSecret: registration.deviceSecret,
     publicPairBaseUrl: "http://localhost:5173",
+    publicHttpBaseUrl: "http://localhost:8787",
     ...(userId ? { userId } : {})
   });
 

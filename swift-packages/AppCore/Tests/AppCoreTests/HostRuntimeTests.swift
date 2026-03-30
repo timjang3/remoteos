@@ -170,7 +170,7 @@ private func makeDeviceSecretStore(
     let runtime = try HostRuntime(
         configurationStore: ConfigurationStore(defaults: defaults),
         deviceSecretStore: makeDeviceSecretStore(keychain: keychain, defaults: defaults),
-        brokerClient: BrokerClient(urlSession: urlSession),
+        brokerClient: HostBrokerConnection(urlSession: urlSession),
         urlSession: urlSession
     )
 
@@ -244,7 +244,7 @@ private func makeDeviceSecretStore(
     let runtime = try HostRuntime(
         configurationStore: ConfigurationStore(defaults: defaults),
         deviceSecretStore: makeDeviceSecretStore(keychain: keychain, defaults: defaults),
-        brokerClient: BrokerClient(urlSession: urlSession),
+        brokerClient: HostBrokerConnection(urlSession: urlSession),
         urlSession: urlSession
     )
 
@@ -313,7 +313,7 @@ private func makeDeviceSecretStore(
             keychain: KeychainTokenStore(service: keychainService),
             defaults: defaults
         ),
-        brokerClient: BrokerClient(urlSession: urlSession),
+        brokerClient: HostBrokerConnection(urlSession: urlSession),
         urlSession: urlSession
     )
 
@@ -461,7 +461,7 @@ private func makeDeviceSecretStore(
     let runtime = try HostRuntime(
         configurationStore: ConfigurationStore(defaults: defaults),
         deviceSecretStore: makeDeviceSecretStore(keychain: keychain, defaults: defaults, legacyKeychain: legacyKeychain),
-        brokerClient: BrokerClient(urlSession: urlSession),
+        brokerClient: HostBrokerConnection(urlSession: urlSession),
         urlSession: urlSession
     )
 
@@ -553,7 +553,7 @@ private func makeDeviceSecretStore(
     let runtime = try HostRuntime(
         configurationStore: ConfigurationStore(defaults: defaults),
         deviceSecretStore: makeDeviceSecretStore(keychain: keychain, defaults: defaults),
-        brokerClient: BrokerClient(urlSession: urlSession),
+        brokerClient: HostBrokerConnection(urlSession: urlSession),
         urlSession: urlSession
     )
 
@@ -668,7 +668,7 @@ private func makeDeviceSecretStore(
     let runtime = try HostRuntime(
         configurationStore: ConfigurationStore(defaults: defaults),
         deviceSecretStore: makeDeviceSecretStore(keychain: keychain, defaults: defaults),
-        brokerClient: BrokerClient(urlSession: urlSession),
+        brokerClient: HostBrokerConnection(urlSession: urlSession),
         urlSession: urlSession
     )
 

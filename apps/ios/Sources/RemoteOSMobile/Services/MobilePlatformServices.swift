@@ -114,7 +114,7 @@ final class MobileAuthCoordinator: NSObject, ASWebAuthenticationPresentationCont
 
             session.presentationContextProvider = self
             session.prefersEphemeralWebBrowserSession = false
-            if session.start() == false {
+            if !session.start() {
                 continuation.resume(throwing: AppCoreError.invalidPayload("Unable to start authentication"))
             }
         }

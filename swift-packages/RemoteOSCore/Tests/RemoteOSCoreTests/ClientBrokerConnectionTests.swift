@@ -24,7 +24,7 @@ private actor MockWebSocketTransport: RemoteOSWebSocketTransport {
     }
 
     func receive() async throws -> Data {
-        if queuedInbound.isEmpty == false {
+        if !queuedInbound.isEmpty {
             return queuedInbound.removeFirst()
         }
 
@@ -120,7 +120,7 @@ private func waitForSentMessages(
 
     for _ in 0..<50 {
         let notifications = await recorder.snapshot()
-        if notifications.isEmpty == false {
+        if !notifications.isEmpty {
             guard case let .agentPromptRequested(prompt) = notifications[0] else {
                 Issue.record("Expected first notification to be an agent prompt")
                 return

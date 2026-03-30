@@ -89,7 +89,7 @@ actor BrokerSessionService {
     }
 
     private func ensureHandlersInstalled() async {
-        guard handlersInstalled == false else {
+        guard !handlersInstalled else {
             return
         }
 

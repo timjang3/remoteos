@@ -197,10 +197,10 @@ final class RemoteOSAppStore {
     }
 
     var canPair: Bool {
-        pairing.controlPlaneBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            && pairing.pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            && pairing.isPairing == false
-            && (requiresAuthentication == false || pairing.isAuthenticated)
+        !pairing.controlPlaneBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !pairing.pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !pairing.isPairing
+            && (!requiresAuthentication || pairing.isAuthenticated)
     }
 
     var isAgentReady: Bool {
@@ -217,7 +217,7 @@ final class RemoteOSAppStore {
         connectedBaseURL = stored.controlPlaneBaseURL
         clientToken = stored.clientToken
 
-        if pairing.controlPlaneBaseURL.isEmpty == false {
+        if !pairing.controlPlaneBaseURL.isEmpty {
             await refreshHealth()
         }
         guard let connectedBaseURL, let clientToken else {
@@ -298,7 +298,7 @@ final class RemoteOSAppStore {
             if let errorMessage = queryItems["error_description"] ?? queryItems["error"] {
                 throw AppCoreError.invalidPayload(errorMessage)
             }
-            guard let code = queryItems["code"], code.isEmpty == false else {
+            guard let code = queryItems["code"], !code.isEmpty else {
                 throw AppCoreError.invalidPayload("Missing authentication code")
             }
 
@@ -317,7 +317,7 @@ final class RemoteOSAppStore {
         let pairingCode = pairing.pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         let clientName = pairing.clientName.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard let baseURL, pairingCode.isEmpty == false else {
+        guard let baseURL, !pairingCode.isEmpty else {
             pairing.errorMessage = "Enter a control plane URL and pairing code."
             return
         }
@@ -325,7 +325,7 @@ final class RemoteOSAppStore {
         if pairing.health == nil || normalizedBaseURL(pairing.controlPlaneBaseURL) != connectedBaseURL {
             await refreshHealth()
         }
-        if requiresAuthentication && pairing.isAuthenticated == false {
+        if requiresAuthentication && !pairing.isAuthenticated {
             pairing.errorMessage = "Sign in to this control plane before pairing."
             return
         }
@@ -441,7 +441,7 @@ final class RemoteOSAppStore {
 
     func sendPrompt() async {
         let prompt = agent.draftPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard prompt.isEmpty == false else {
+        guard !prompt.isEmpty else {
             return
         }
         guard isAgentReady else {
@@ -517,7 +517,7 @@ final class RemoteOSAppStore {
     }
 
     func toggleDictation() async {
-        guard session.speechCapabilities?.transcriptionAvailable == true else {
+        guard session.speechCapabilities?.transcriptionAvailable ?? false else {
             return
         }
 
@@ -539,7 +539,7 @@ final class RemoteOSAppStore {
 
     func submitTextEntry() async {
         let text = session.textEntryValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard text.isEmpty == false else {
+        guard !text.isEmpty else {
             return
         }
 
@@ -732,7 +732,7 @@ final class RemoteOSAppStore {
             case let .hostStatus(payload):
                 session.hostStatus = payload
                 session.codexStatus = payload.codex
-                if session.isWindowSheetPresented == false {
+                if !session.isWindowSheetPresented {
                     session.selectedWindowID = payload.selectedWindowId
                 }
             case let .codexStatus(payload):
@@ -792,7 +792,7 @@ final class RemoteOSAppStore {
 
     private func normalizedBaseURL(_ value: String?) -> String? {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard trimmed.isEmpty == false else {
+        guard !trimmed.isEmpty else {
             return nil
         }
         return trimmed.replacingOccurrences(of: "/$", with: "", options: .regularExpression)

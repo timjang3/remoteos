@@ -127,16 +127,15 @@ public actor ClientBrokerConnection {
 
         return try await withCheckedThrowingContinuation { continuation in
             pending[id] = continuation
-            Task { [weak self] in
+            let outboundQueue = self.outboundQueue
+            let transport = self.transport
+            Task { [self] in
                 do {
-                    try await self?.outboundQueue.enqueue(kind: .control, data: data) { [weak self] payload in
-                        guard let self else {
-                            throw CancellationError()
-                        }
-                        try await self.transport.send(payload)
+                    try await outboundQueue.enqueue(kind: .control, data: data) { payload in
+                        try await transport.send(payload)
                     }
                 } catch {
-                    await self?.resumePending(id: id, with: .failure(error))
+                    resumePending(id: id, with: .failure(error))
                 }
             }
         }
@@ -154,7 +153,7 @@ public actor ClientBrokerConnection {
                 try await handleInbound(data: data)
             }
         } catch {
-            if Task.isCancelled == false {
+            if !Task.isCancelled {
                 log.error("Client broker receive loop failed error=\(error.localizedDescription)")
                 failPending(error)
                 await disconnectHandler?(error)

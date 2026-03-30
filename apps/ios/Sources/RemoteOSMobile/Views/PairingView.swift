@@ -57,7 +57,7 @@ struct PairingView: View {
                         )
                         .font(.headline)
 
-                        if health.googleAuthEnabled == true && health.authMode == .required {
+                        if (health.googleAuthEnabled ?? false) && health.authMode == .required {
                             Text(store.pairing.isAuthenticated ? (store.pairing.signedInEmail ?? "Signed in with a bearer token.") : "Use the native Google sign-in flow before claiming the pairing code.")
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
@@ -112,7 +112,7 @@ struct PairingView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(store.canPair == false)
+                    .disabled(!store.canPair)
                 }
 
                 if let errorMessage = store.pairing.errorMessage {

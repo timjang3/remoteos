@@ -578,7 +578,7 @@ public struct BrokerRegistration: Codable, Sendable, Equatable {
     }
 
     public var isApprovalRequired: Bool {
-        approvalRequired == true
+        approvalRequired ?? false
     }
 }
 

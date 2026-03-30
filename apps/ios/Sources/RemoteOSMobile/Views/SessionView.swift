@@ -76,7 +76,7 @@ struct SessionView: View {
     private var header: some View {
         HStack(spacing: 14) {
             Circle()
-                .fill(store.session.hostStatus?.online == true ? Color.green : Color.orange)
+                .fill((store.session.hostStatus?.online ?? false) ? Color.green : Color.orange)
                 .frame(width: 10, height: 10)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -215,7 +215,7 @@ struct SessionView: View {
                     }
                     .buttonStyle(.borderedProminent)
                 } else {
-                    if store.session.speechCapabilities?.transcriptionAvailable == true {
+                    if store.session.speechCapabilities?.transcriptionAvailable ?? false {
                         Button {
                             Task {
                                 await store.toggleDictation()
@@ -235,7 +235,7 @@ struct SessionView: View {
                         Image(systemName: "paperplane.fill")
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(store.isAgentReady == false || store.agent.draftPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!store.isAgentReady || store.agent.draftPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .padding(.horizontal, 20)
@@ -285,7 +285,7 @@ struct SessionView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.title)
                         .font(.subheadline.weight(.semibold))
-                    if let body = item.body, body.isEmpty == false {
+                    if let body = item.body, !body.isEmpty {
                         Text(body)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
@@ -575,13 +575,13 @@ private struct PromptCardView: View {
                 }
             }
 
-            if let body = prompt.body, body.isEmpty == false {
+            if let body = prompt.body, !body.isEmpty {
                 Text(body)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
 
-            if prompt.questions.isEmpty == false {
+            if !prompt.questions.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(prompt.questions, id: \.id) { question in
                         VStack(alignment: .leading, spacing: 8) {
@@ -591,7 +591,7 @@ private struct PromptCardView: View {
                             Text(question.question)
                                 .font(.subheadline)
 
-                            if let options = question.options, options.isEmpty == false {
+                            if let options = question.options, !options.isEmpty {
                                 Picker(question.header, selection: Binding(
                                     get: { selectedOptions[question.id] ?? "" },
                                     set: { selectedOptions[question.id] = $0 }
@@ -632,7 +632,7 @@ private struct PromptCardView: View {
 
                     Button("Continue") {
                         let answers = buildAnswers()
-                        if answers.isEmpty && prompt.questions.isEmpty == false {
+                        if answers.isEmpty && !prompt.questions.isEmpty {
                             validationError = "Answer every prompt before continuing."
                             return
                         }
@@ -644,7 +644,7 @@ private struct PromptCardView: View {
                 }
             }
 
-            if let choices = prompt.choices, choices.isEmpty == false {
+            if let choices = prompt.choices, !choices.isEmpty {
                 HStack {
                     ForEach(choices, id: \.id) { choice in
                         if choice.id == "accept" {
@@ -683,7 +683,7 @@ private struct PromptCardView: View {
             let typedValue = textAnswers[question.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let resolvedValue = (selectedValue == "__other__" || selectedValue?.isEmpty != false) ? typedValue : (selectedValue ?? "")
 
-            guard resolvedValue.isEmpty == false else {
+            guard !resolvedValue.isEmpty else {
                 return [:]
             }
 
@@ -813,7 +813,7 @@ private struct SettingsSheet: View {
                     ))
                 }
 
-                if store.session.traceEvents.isEmpty == false {
+                if !store.session.traceEvents.isEmpty {
                     Section("Recent traces") {
                         ForEach(store.session.traceEvents.prefix(8)) { event in
                             VStack(alignment: .leading, spacing: 4) {
@@ -922,7 +922,7 @@ private extension RemoteOSAppStore {
     var storeStatusLine: String {
         switch session.connectionState {
         case .connected:
-            return session.hostStatus?.online == true ? "Connected" : "Mac offline"
+            return (session.hostStatus?.online ?? false) ? "Connected" : "Mac offline"
         case .bootstrapping:
             return "Bootstrapping"
         case .connecting:

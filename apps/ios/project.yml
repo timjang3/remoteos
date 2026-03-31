@@ -28,6 +28,7 @@ targets:
         PRODUCT_NAME: RemoteOSMobile
         SWIFT_VERSION: 6.0
         SWIFT_ENABLE_EXPLICIT_MODULES: NO
+        ENABLE_DEBUG_DYLIB: NO
         SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../swift-packages/RemoteOSCore/build/Release-$(PLATFORM_NAME)
         SUPPORTED_PLATFORMS: iphoneos iphonesimulator
         EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64

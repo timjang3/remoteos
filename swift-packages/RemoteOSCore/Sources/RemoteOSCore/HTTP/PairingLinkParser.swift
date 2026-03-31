@@ -22,13 +22,7 @@ public enum PairingLinkParser {
             throw AppCoreError.invalidPayload("Invalid pairing URL")
         }
 
-        let queryPairs: [(String, String)] = components.queryItems?.compactMap { item in
-            guard let value = item.value else {
-                return nil
-            }
-            return (item.name, value)
-        } ?? []
-        let queryItems = Dictionary(uniqueKeysWithValues: queryPairs)
+        let queryItems = try URLQueryParameterParser.uniqueValues(from: components.queryItems ?? [])
 
         guard let pairingCode = queryItems["code"]?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines), pairingCode.isEmpty == false else {
             throw AppCoreError.invalidPayload("Missing pairing code")

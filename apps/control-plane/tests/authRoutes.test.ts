@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ControlPlaneAuth } from "../src/auth.js";
 import { registerAuthRoutes } from "../src/authRoutes.js";
 import { loadConfig } from "../src/config.js";
-import { MobileAuthStore } from "../src/mobileAuthStore.js";
+import { MemoryMobileAuthStore } from "../src/mobileAuthStore.js";
 
 function createHostedConfig(overrides: NodeJS.ProcessEnv = {}) {
   return loadConfig({
@@ -86,7 +86,7 @@ describe("registerAuthRoutes mobile auth bridge", () => {
     const { auth, handler } = createAuthStub();
     const app = Fastify();
     apps.add(app);
-    await registerAuthRoutes(app, auth, config, new MobileAuthStore());
+    await registerAuthRoutes(app, auth, config, new MemoryMobileAuthStore());
 
     const startResponse = await app.inject({
       method: "GET",
@@ -164,7 +164,7 @@ describe("registerAuthRoutes mobile auth bridge", () => {
     const { auth } = createAuthStub();
     const app = Fastify();
     apps.add(app);
-    await registerAuthRoutes(app, auth, config, new MobileAuthStore());
+    await registerAuthRoutes(app, auth, config, new MemoryMobileAuthStore());
 
     const response = await app.inject({
       method: "GET",
@@ -180,7 +180,7 @@ describe("registerAuthRoutes mobile auth bridge", () => {
     const { auth, handler, getSession } = createAuthStub();
     const app = Fastify();
     apps.add(app);
-    await registerAuthRoutes(app, auth, config, new MobileAuthStore());
+    await registerAuthRoutes(app, auth, config, new MemoryMobileAuthStore());
 
     const startResponse = await app.inject({
       method: "GET",

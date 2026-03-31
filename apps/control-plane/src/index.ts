@@ -13,6 +13,7 @@ import { requireAuth } from "./authMiddleware.js";
 import { registerAuthRoutes } from "./authRoutes.js";
 import { loadConfig } from "./config.js";
 import { createDb } from "./db/index.js";
+import { PostgresMobileAuthStore } from "./postgresMobileAuthStore.js";
 import { PostgresBrokerStore } from "./postgresStore.js";
 import { registerRoutes } from "./routes.js";
 import { createSpeechTranscriptionProvider } from "./speech.js";
@@ -31,6 +32,9 @@ const store = db
   ? new PostgresBrokerStore(db, config.publicPairBaseUrl, config.tokenHashSecret!)
   : new MemoryBrokerStore();
 const auth = config.authMode === "required" && db ? createAuth(db, config) : null;
+const mobileAuthStore = auth && db
+  ? new PostgresMobileAuthStore(db, config.tokenHashSecret!)
+  : null;
 const authMiddleware = auth ? requireAuth(auth) : undefined;
 const speechProvider = createSpeechTranscriptionProvider(config);
 
@@ -66,8 +70,8 @@ if (db) {
   });
 }
 
-if (auth) {
-  await registerAuthRoutes(app, auth, config);
+if (auth && mobileAuthStore) {
+  await registerAuthRoutes(app, auth, config, mobileAuthStore);
 }
 await registerRoutes(app, {
   store,

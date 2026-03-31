@@ -3,11 +3,14 @@ import type {
   FastifyReply
 } from "fastify";
 import { fromNodeHeaders } from "better-auth/node";
-import { z } from "zod";
+import { ZodError, z } from "zod";
 
 import type { ControlPlaneAuth } from "./auth.js";
 import type { ControlPlaneConfig } from "./config.js";
-import { MobileAuthStore } from "./mobileAuthStore.js";
+import {
+  MemoryMobileAuthStore,
+  type MobileAuthStore
+} from "./mobileAuthStore.js";
 
 const mobileAuthStartQuerySchema = z.object({
   provider: z.enum(["google"]),
@@ -131,11 +134,19 @@ function buildRedirectUri(
   return url.toString();
 }
 
+function sendAuthRouteError(reply: FastifyReply, error: unknown) {
+  return reply.code(error instanceof ZodError ? 400 : 500).send({
+    error: error instanceof ZodError
+      ? "Invalid authentication request"
+      : "Internal authentication error"
+  });
+}
+
 export async function registerAuthRoutes(
   app: FastifyInstance,
   auth: ControlPlaneAuth,
   config: ControlPlaneConfig,
-  mobileAuthStore = new MobileAuthStore()
+  mobileAuthStore: MobileAuthStore = new MemoryMobileAuthStore()
 ) {
   app.all("/api/auth/*", async (request, reply) => {
     try {
@@ -190,7 +201,7 @@ export async function registerAuthRoutes(
         });
       }
 
-      const flow = mobileAuthStore.createFlow({
+      const flow = await mobileAuthStore.createFlow({
         provider: query.provider,
         redirectUri
       });
@@ -221,7 +232,7 @@ export async function registerAuthRoutes(
       );
 
       if (!response.ok) {
-        mobileAuthStore.consumeFlow(flow.id);
+        await mobileAuthStore.consumeFlow(flow.id);
         return sendWebResponse(reply, response);
       }
 
@@ -229,7 +240,7 @@ export async function registerAuthRoutes(
         url?: string;
       };
       if (!payload.url) {
-        mobileAuthStore.consumeFlow(flow.id);
+        await mobileAuthStore.consumeFlow(flow.id);
         request.log.error({ flowId: flow.id }, "Better Auth did not return a social authorization URL");
         return reply.code(500).send({
           error: "Authentication provider redirect failed"
@@ -240,51 +251,50 @@ export async function registerAuthRoutes(
       return reply.redirect(payload.url);
     } catch (error) {
       request.log.error(error, "Mobile auth start failed");
-      return reply.code(500).send({
-        error: "Internal authentication error"
-      });
+      return sendAuthRouteError(reply, error);
     }
   });
 
   app.get("/mobile/auth/callback", async (request, reply) => {
-    const query = mobileAuthCallbackQuerySchema.parse(request.query);
-    const flow = mobileAuthStore.getFlow(query.flow);
-    if (!flow) {
-      return reply.code(400).send({
-        error: "Authentication flow not found or expired"
-      });
-    }
-
-    const redirectWithParams = (params: Record<string, string | undefined>) => {
-      mobileAuthStore.consumeFlow(query.flow);
-      return reply.redirect(buildRedirectUri(flow.redirectUri, params));
-    };
-
-    if (query.error) {
-      return redirectWithParams({
-        error: query.error,
-        error_description: query.error_description
-      });
-    }
-
+    let redirectUri: string | undefined;
     try {
+      const query = mobileAuthCallbackQuerySchema.parse(request.query);
+      const flow = await mobileAuthStore.consumeFlow(query.flow);
+      if (!flow) {
+        return reply.code(400).send({
+          error: "Authentication flow not found or expired"
+        });
+      }
+
+      redirectUri = flow.redirectUri;
+      const flowRedirectUri = redirectUri;
+      const redirectToApp = (params: Record<string, string | undefined>) =>
+        reply.redirect(buildRedirectUri(flowRedirectUri, params));
+
+      if (query.error) {
+        return redirectToApp({
+          error: query.error,
+          error_description: query.error_description
+        });
+      }
+
       const session = await auth.api.getSession({
         headers: fromNodeHeaders(request.headers)
       });
       if (!session) {
-        return redirectWithParams({
+        return redirectToApp({
           error: "unauthorized"
         });
       }
 
       const authToken = readSessionAuthToken(request.headers.cookie, config);
       if (!authToken) {
-        return redirectWithParams({
+        return redirectToApp({
           error: "missing_session_token"
         });
       }
 
-      const exchange = mobileAuthStore.createExchange({
+      const exchange = await mobileAuthStore.createExchange({
         authToken,
         user: {
           id: session.user.id,
@@ -294,27 +304,34 @@ export async function registerAuthRoutes(
         }
       });
 
-      mobileAuthStore.consumeFlow(query.flow);
-      return reply.redirect(buildRedirectUri(flow.redirectUri, {
+      return redirectToApp({
         code: exchange.code
-      }));
+      });
     } catch (error) {
       request.log.error(error, "Mobile auth callback failed");
-      return redirectWithParams({
-        error: "internal_error"
-      });
+      if (redirectUri) {
+        return reply.redirect(buildRedirectUri(redirectUri, {
+          error: "internal_error"
+        }));
+      }
+      return sendAuthRouteError(reply, error);
     }
   });
 
   app.post("/mobile/auth/exchange", async (request, reply) => {
-    const body = mobileAuthExchangeBodySchema.parse(request.body);
-    const exchange = mobileAuthStore.consumeExchange(body.code);
-    if (!exchange) {
-      return reply.code(400).send({
-        error: "Authentication code not found or expired"
-      });
-    }
+    try {
+      const body = mobileAuthExchangeBodySchema.parse(request.body);
+      const exchange = await mobileAuthStore.consumeExchange(body.code);
+      if (!exchange) {
+        return reply.code(400).send({
+          error: "Authentication code not found or expired"
+        });
+      }
 
-    return reply.send(exchange);
+      return reply.send(exchange);
+    } catch (error) {
+      request.log.error(error, "Mobile auth exchange failed");
+      return sendAuthRouteError(reply, error);
+    }
   });
 }

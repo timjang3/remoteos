@@ -25,7 +25,24 @@ export type MobileAuthExchange = {
   expiresAt: string;
 };
 
-export class MobileAuthStore {
+export type CreateMobileAuthFlowInput = {
+  provider: MobileAuthProvider;
+  redirectUri: string;
+};
+
+export type CreateMobileAuthExchangeInput = {
+  authToken: string;
+  user: MobileAuthUser;
+};
+
+export interface MobileAuthStore {
+  createFlow(input: CreateMobileAuthFlowInput): Promise<MobileAuthFlow>;
+  consumeFlow(id: string): Promise<MobileAuthFlow | undefined>;
+  createExchange(input: CreateMobileAuthExchangeInput): Promise<MobileAuthExchange>;
+  consumeExchange(code: string): Promise<MobileAuthExchange | undefined>;
+}
+
+export class MemoryMobileAuthStore implements MobileAuthStore {
   private readonly flows = new Map<string, MobileAuthFlow>();
   private readonly exchanges = new Map<string, MobileAuthExchange>();
 
@@ -48,10 +65,7 @@ export class MobileAuthStore {
     }
   }
 
-  createFlow(input: {
-    provider: MobileAuthProvider;
-    redirectUri: string;
-  }): MobileAuthFlow {
+  async createFlow(input: CreateMobileAuthFlowInput): Promise<MobileAuthFlow> {
     this.cleanup();
     const createdAt = new Date().toISOString();
     const flow: MobileAuthFlow = {
@@ -65,12 +79,7 @@ export class MobileAuthStore {
     return flow;
   }
 
-  getFlow(id: string) {
-    this.cleanup();
-    return this.flows.get(id);
-  }
-
-  consumeFlow(id: string) {
+  async consumeFlow(id: string): Promise<MobileAuthFlow | undefined> {
     this.cleanup();
     const flow = this.flows.get(id);
     if (!flow) {
@@ -81,10 +90,7 @@ export class MobileAuthStore {
     return flow;
   }
 
-  createExchange(input: {
-    authToken: string;
-    user: MobileAuthUser;
-  }): MobileAuthExchange {
+  async createExchange(input: CreateMobileAuthExchangeInput): Promise<MobileAuthExchange> {
     this.cleanup();
     const createdAt = new Date().toISOString();
     const exchange: MobileAuthExchange = {
@@ -98,7 +104,7 @@ export class MobileAuthStore {
     return exchange;
   }
 
-  consumeExchange(code: string) {
+  async consumeExchange(code: string): Promise<MobileAuthExchange | undefined> {
     this.cleanup();
     const exchange = this.exchanges.get(code);
     if (!exchange) {

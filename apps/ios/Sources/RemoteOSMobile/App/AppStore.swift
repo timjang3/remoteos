@@ -288,12 +288,7 @@ final class RemoteOSAppStore {
             )
 
             let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)
-            let queryItems: [String: String] = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).compactMap { item in
-                guard let value = item.value else {
-                    return nil
-                }
-                return (item.name, value)
-            })
+            let queryItems = try URLQueryParameterParser.uniqueValues(from: components?.queryItems ?? [])
 
             if let errorMessage = queryItems["error_description"] ?? queryItems["error"] {
                 throw AppCoreError.invalidPayload(errorMessage)

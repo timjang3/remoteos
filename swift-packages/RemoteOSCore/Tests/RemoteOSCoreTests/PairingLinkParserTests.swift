@@ -13,3 +13,9 @@ import Testing
         _ = try PairingLinkParser.parse("https://remoteos.app/?code=ABC123")
     }
 }
+
+@Test func pairingLinkParserRejectsDuplicateQueryParameters() throws {
+    #expect(throws: Error.self) {
+        _ = try PairingLinkParser.parse("https://remoteos.app/?code=ABC123&code=DEF456&api=https://control.remoteos.app")
+    }
+}

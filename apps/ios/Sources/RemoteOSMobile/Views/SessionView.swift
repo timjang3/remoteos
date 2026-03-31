@@ -13,6 +13,7 @@ extension Color {
     static let roAccent = Color(red: 0.910, green: 0.769, blue: 0.722)
     static let roSuccess = Color(red: 0.290, green: 0.871, blue: 0.502)
     static let roDanger = Color(red: 0.973, green: 0.443, blue: 0.443)
+    static let roWarning = Color(red: 0.980, green: 0.800, blue: 0.082)
     static let roBorder = Color.white.opacity(0.06)
     static let roBorderActive = Color.white.opacity(0.12)
 }
@@ -274,6 +275,8 @@ struct SessionView: View {
 
     @ViewBuilder
     private func transcriptBubble(item: AgentItemPayload) -> some View {
+        let isRunning = item.status == .inProgress
+
         switch item.kind {
         case .userMessage:
             HStack {
@@ -293,39 +296,196 @@ struct SessionView: View {
                         )
                     )
             }
+
         case .assistantMessage:
-            HStack {
-                Text(item.body ?? item.title)
-                    .font(.body)
-                    .foregroundStyle(Color.roText)
-                    .textSelection(.enabled)
-                Spacer(minLength: 60)
-            }
-        default:
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "waveform.path.ecg")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color.roTextTertiary)
-                    .frame(width: 20)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(item.title)
-                        .font(.subheadline.weight(.medium))
+            if item.metadata["phase"] == "commentary" {
+                activityBlock(
+                    status: item.status,
+                    headline: firstLine(item.body) ?? "Commentary",
+                    meta: isRunning ? "Commentary" : nil,
+                    body: bodyAfterFirstLine(item.body),
+                    isCode: false
+                )
+            } else {
+                HStack {
+                    Text(item.body ?? item.title)
+                        .font(.body)
                         .foregroundStyle(Color.roText)
-                    if let body = item.body, !body.isEmpty {
-                        Text(body)
-                            .font(.footnote)
-                            .foregroundStyle(Color.roTextSecondary)
-                    }
+                        .textSelection(.enabled)
+                    Spacer(minLength: 60)
                 }
-                Spacer()
             }
-            .padding(12)
-            .background(Color.roSurface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.roBorder, lineWidth: 1)
+
+        case .reasoning:
+            if item.status == .completed && (item.body ?? "").isEmpty {
+                EmptyView()
+            } else {
+                activityBlock(
+                    status: item.status,
+                    headline: firstLine(item.body) ?? "Thinking",
+                    meta: isRunning ? "Thinking" : nil,
+                    body: bodyAfterFirstLine(item.body),
+                    isCode: false
+                )
+            }
+
+        case .plan:
+            if item.status == .completed && (item.body ?? "").isEmpty {
+                EmptyView()
+            } else {
+                activityBlock(
+                    status: item.status,
+                    headline: "Updated Plan",
+                    meta: nil,
+                    body: item.body,
+                    isCode: false
+                )
+            }
+
+        case .command:
+            activityBlock(
+                status: item.status,
+                headline: isRunning ? "Running \(item.title)" : "Ran \(item.title)",
+                meta: item.metadata["cwd"],
+                body: item.body,
+                isCode: true
+            )
+
+        case .fileChange:
+            let count = item.metadata["count"] ?? "0"
+            activityBlock(
+                status: item.status,
+                headline: isRunning ? "Preparing file changes" : "Updated \(count) file(s)",
+                meta: nil,
+                body: item.body,
+                isCode: false
+            )
+
+        case .mcpTool:
+            let server = item.metadata["server"]
+            activityBlock(
+                status: item.status,
+                headline: isRunning ? "Calling \(item.title)" : "Called \(item.title)",
+                meta: server.map { "MCP \u{00B7} \($0)" } ?? "MCP",
+                body: item.body,
+                isCode: true
+            )
+
+        case .dynamicTool:
+            let isComputerUse = item.title.contains("computer_use")
+            activityBlock(
+                status: item.status,
+                headline: remoteToolHeadline(title: item.title, isRunning: isRunning),
+                meta: isComputerUse ? nil : "Tool",
+                body: isComputerUse ? nil : item.body,
+                isCode: !isComputerUse
+            )
+
+        case .system:
+            activityBlock(
+                status: item.status,
+                headline: item.title,
+                meta: nil,
+                body: nil,
+                isCode: false
             )
         }
+    }
+
+    // MARK: - Activity Block (matches web activity-block)
+
+    @ViewBuilder
+    private func activityBlock(
+        status: AgentItemStatus,
+        headline: String,
+        meta: String?,
+        body: String?,
+        isCode: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 8) {
+                statusIcon(for: status)
+                    .frame(width: 16, height: 20)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(headline)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.roTextSecondary)
+                        .lineLimit(2)
+
+                    if let meta {
+                        Text(meta)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(Color.roTextTertiary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+
+            if let body, !body.isEmpty {
+                Text(body)
+                    .font(isCode ? .system(size: 12, design: .monospaced) : .system(size: 13))
+                    .foregroundStyle(Color.roTextSecondary)
+                    .lineLimit(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(Color.roSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .padding(.leading, 24)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func statusIcon(for status: AgentItemStatus) -> some View {
+        switch status {
+        case .inProgress:
+            ProgressView()
+                .controlSize(.mini)
+                .tint(Color.roAccent)
+        case .completed:
+            Image(systemName: "checkmark")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.roSuccess)
+        case .failed:
+            Image(systemName: "xmark")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.roDanger)
+        case .declined:
+            Circle()
+                .fill(Color.roWarning)
+                .frame(width: 6, height: 6)
+        }
+    }
+
+    private func remoteToolHeadline(title: String, isRunning: Bool) -> String {
+        let map: [String: (String, String)] = [
+            "remoteos_click": ("Clicking", "Clicked"),
+            "remoteos_type": ("Typing text", "Typed text"),
+            "remoteos_scroll": ("Scrolling", "Scrolled"),
+            "remoteos_key": ("Pressing key", "Pressed key"),
+            "remoteos_drag": ("Dragging", "Dragged"),
+            "remoteos_screenshot": ("Taking screenshot", "Took screenshot"),
+        ]
+        if let entry = map[title] {
+            return isRunning ? entry.0 : entry.1
+        }
+        if title.contains("computer_use") {
+            return isRunning ? "Using computer" : "Used computer"
+        }
+        return isRunning ? "Calling \(title)" : "Called \(title)"
+    }
+
+    private func firstLine(_ text: String?) -> String? {
+        guard let text, !text.isEmpty else { return nil }
+        return text.components(separatedBy: "\n").first
+    }
+
+    private func bodyAfterFirstLine(_ text: String?) -> String? {
+        guard let text, !text.isEmpty else { return nil }
+        let lines = text.components(separatedBy: "\n")
+        guard lines.count > 1 else { return nil }
+        let rest = lines.dropFirst().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return rest.isEmpty ? nil : rest
     }
 
     // MARK: - Composer

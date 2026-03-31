@@ -6,8 +6,10 @@ build
 coverage
 apps/web/dev-dist
 apps/web/.vite
-apps/macos/.build
-swift-packages/AppCore/.build
+.build/
+.swiftpm/
+xcuserdata/
+*.xcuserdatad
 *.xcuserdata
 *.xcuserstate
 *.xcarchive
@@ -16,6 +18,7 @@ swift-packages/AppCore/.build
 *.app
 *.dmg
 *.pkg
+*.profraw
 DerivedData
 
 # Environment / secrets

@@ -1,3 +1,0 @@
-module RemoteOSCore {
-    header "/Users/timjang/Desktop/random/remoteos/swift-packages/RemoteOSCore/.build/arm64-apple-macosx/debug/RemoteOSCore.build/include/RemoteOSCore-Swift.h"
-}

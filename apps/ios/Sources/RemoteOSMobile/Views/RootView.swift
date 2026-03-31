@@ -11,6 +11,8 @@ struct RootView: View {
                 PairingView(store: store)
             }
         }
-        .background(Color(uiColor: .systemGroupedBackground))
+        .background(Color.roBackground)
+        .preferredColorScheme(.dark)
+        .tint(Color.roAccent)
     }
 }

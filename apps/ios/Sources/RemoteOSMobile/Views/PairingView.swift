@@ -1,4 +1,5 @@
 import SwiftUI
+import RemoteOSCore
 import VisionKit
 
 struct PairingView: View {
@@ -6,18 +7,44 @@ struct PairingView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("RemoteOS")
-                        .font(.system(size: 36, weight: .bold, design: .rounded))
-                    Text("Pair your iPhone with the Mac control plane, then use the same live stream, prompts, and agent controls you already have on the web.")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                }
+            VStack(spacing: 24) {
+                // Logo & header
+                VStack(spacing: 12) {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.roSurface, Color.roBackground],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .frame(width: 72, height: 72)
+                        .overlay(
+                            Image(systemName: "desktopcomputer")
+                                .font(.system(size: 28, weight: .light))
+                                .foregroundStyle(Color.roAccent)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        )
 
-                VStack(alignment: .leading, spacing: 16) {
-                    labeledField(
-                        title: "Control plane URL",
+                    Text("RemoteOS")
+                        .font(.system(size: 28, weight: .bold))
+                        .foregroundStyle(Color.roText)
+
+                    Text("Pair with your Mac control plane to stream, prompt, and control remotely.")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.roTextSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 16)
+                }
+                .padding(.top, 32)
+
+                // Input card
+                VStack(spacing: 16) {
+                    fieldGroup(
+                        label: "Control plane URL",
                         text: Binding(
                             get: { store.pairing.controlPlaneBaseURL },
                             set: { store.pairing.controlPlaneBaseURL = $0 }
@@ -25,8 +52,8 @@ struct PairingView: View {
                         placeholder: "https://control.remoteos.app"
                     )
 
-                    labeledField(
-                        title: "Pairing code",
+                    fieldGroup(
+                        label: "Pairing code",
                         text: Binding(
                             get: { store.pairing.pairingCode },
                             set: { store.pairing.pairingCode = $0.uppercased() }
@@ -35,8 +62,8 @@ struct PairingView: View {
                     )
                     .textInputAutocapitalization(.characters)
 
-                    labeledField(
-                        title: "Client name",
+                    fieldGroup(
+                        label: "Client name",
                         text: Binding(
                             get: { store.pairing.clientName },
                             set: { store.pairing.clientName = $0 }
@@ -45,84 +72,100 @@ struct PairingView: View {
                     )
                 }
                 .padding(20)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .background(Color.roSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(Color.roBorder, lineWidth: 1)
+                )
 
+                // Health status
                 if let health = store.pairing.health {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(
-                            health.authMode == .required
-                                ? (store.pairing.isAuthenticated ? "Hosted sign-in is ready." : "This control plane requires sign-in.")
-                                : "Direct pairing is available.",
-                            systemImage: health.authMode == .required ? "person.badge.key" : "bolt.horizontal"
-                        )
-                        .font(.headline)
-
-                        if (health.googleAuthEnabled ?? false) && health.authMode == .required {
-                            Text(store.pairing.isAuthenticated ? (store.pairing.signedInEmail ?? "Signed in with a bearer token.") : "Use the native Google sign-in flow before claiming the pairing code.")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(18)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    healthCard(health)
                 }
 
-                VStack(spacing: 12) {
+                // Action buttons
+                VStack(spacing: 10) {
                     Button {
                         store.pairing.isScannerPresented = true
                     } label: {
-                        Label("Scan pairing QR", systemImage: "qrcode.viewfinder")
+                        Label("Scan Pairing QR", systemImage: "qrcode.viewfinder")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Color.roBackground)
                             .frame(maxWidth: .infinity)
+                            .padding(.vertical, 15)
+                            .background(Color.roAccent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
-                    .buttonStyle(.borderedProminent)
 
                     Button {
-                        Task {
-                            await store.refreshHealth()
-                        }
+                        Task { await store.refreshHealth() }
                     } label: {
-                        Label(store.pairing.isCheckingHealth ? "Checking…" : "Check server", systemImage: "arrow.clockwise")
-                            .frame(maxWidth: .infinity)
+                        Label(
+                            store.pairing.isCheckingHealth ? "Checking\u{2026}" : "Check Server",
+                            systemImage: "arrow.clockwise"
+                        )
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(Color.roText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 15)
+                        .background(Color.roSurfaceRaised, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
-                    .buttonStyle(.bordered)
                     .disabled(store.pairing.isCheckingHealth)
+                    .opacity(store.pairing.isCheckingHealth ? 0.6 : 1)
 
                     if store.requiresAuthentication {
                         Button {
-                            Task {
-                                await store.signIn()
-                            }
+                            Task { await store.signIn() }
                         } label: {
                             Label(
-                                store.pairing.isAuthenticating ? "Signing in…" : (store.pairing.isAuthenticated ? "Signed in" : "Continue with Google"),
+                                store.pairing.isAuthenticating ? "Signing in\u{2026}" : (store.pairing.isAuthenticated ? "Signed In" : "Continue with Google"),
                                 systemImage: "person.crop.circle.badge.checkmark"
                             )
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(Color.roText)
                             .frame(maxWidth: .infinity)
+                            .padding(.vertical, 15)
+                            .background(Color.roSurfaceRaised, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         }
-                        .buttonStyle(.bordered)
                         .disabled(store.pairing.isAuthenticating || store.pairing.isAuthenticated)
+                        .opacity((store.pairing.isAuthenticating || store.pairing.isAuthenticated) ? 0.6 : 1)
                     }
 
                     Button {
-                        Task {
-                            await store.pair()
-                        }
+                        Task { await store.pair() }
                     } label: {
-                        Text(store.pairing.isPairing ? "Connecting…" : "Connect")
+                        Text(store.pairing.isPairing ? "Connecting\u{2026}" : "Connect")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Color.roBackground)
                             .frame(maxWidth: .infinity)
+                            .padding(.vertical, 15)
+                            .background(Color.roAccent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
-                    .buttonStyle(.borderedProminent)
                     .disabled(!store.canPair)
+                    .opacity(store.canPair ? 1 : 0.5)
                 }
 
+                // Error
                 if let errorMessage = store.pairing.errorMessage {
                     Text(errorMessage)
                         .font(.footnote)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.roDanger)
+                        .multilineTextAlignment(.center)
                 }
             }
-            .padding(24)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 32)
         }
+        .background(
+            ZStack {
+                Color.roBackground
+                RadialGradient(
+                    colors: [Color.roAccent.opacity(0.08), Color.clear],
+                    center: .top,
+                    startRadius: 0,
+                    endRadius: 400
+                )
+            }
+        )
         .sheet(
             isPresented: Binding(
                 get: { store.pairing.isScannerPresented },
@@ -131,9 +174,7 @@ struct PairingView: View {
         ) {
             PairingScannerView(
                 onCode: { value in
-                    Task {
-                        await store.applyScannedPairingLink(value)
-                    }
+                    Task { await store.applyScannedPairingLink(value) }
                 },
                 onClose: {
                     store.pairing.isScannerPresented = false
@@ -142,24 +183,65 @@ struct PairingView: View {
         }
     }
 
-    private func labeledField(
-        title: String,
-        text: Binding<String>,
-        placeholder: String
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+    // MARK: - Components
+
+    private func fieldGroup(label: String, text: Binding<String>, placeholder: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.roTextSecondary)
             TextField(placeholder, text: text)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+                .font(.body)
+                .foregroundStyle(Color.roText)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
-                .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background(Color.roBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.roBorder, lineWidth: 1)
+                )
         }
     }
+
+    private func healthCard(_ health: ControlPlaneHealthPayload) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: health.authMode == .required ? "person.badge.key" : "bolt.horizontal")
+                .font(.system(size: 20))
+                .foregroundStyle(Color.roAccent)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(
+                    health.authMode == .required
+                        ? (store.pairing.isAuthenticated ? "Sign-in ready" : "Sign-in required")
+                        : "Direct pairing available"
+                )
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Color.roText)
+
+                if (health.googleAuthEnabled ?? false) && health.authMode == .required {
+                    Text(
+                        store.pairing.isAuthenticated
+                            ? (store.pairing.signedInEmail ?? "Authenticated")
+                            : "Sign in with Google to continue"
+                    )
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.roTextSecondary)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.roSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.roBorder, lineWidth: 1)
+        )
+    }
 }
+
+// MARK: - Scanner
 
 private struct PairingScannerView: View {
     let onCode: (String) -> Void
@@ -175,20 +257,24 @@ private struct PairingScannerView: View {
                     VStack(spacing: 12) {
                         Image(systemName: "camera.metering.unknown")
                             .font(.system(size: 40))
-                        Text("QR scanning is only available on supported iPhone hardware.")
+                            .foregroundStyle(Color.roTextTertiary)
+                        Text("QR scanning requires supported hardware.")
                             .multilineTextAlignment(.center)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.roTextSecondary)
                     }
                     .padding()
                 }
             }
+            .background(Color.roBackground)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done", action: onClose)
+                        .foregroundStyle(Color.roAccent)
                 }
             }
-            .navigationTitle("Scan Pairing QR")
+            .navigationTitle("Scan QR Code")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
         }
     }
 }
@@ -236,9 +322,7 @@ private struct QRScannerRepresentable: UIViewControllerRepresentable {
             didAdd addedItems: [RecognizedItem],
             allItems: [RecognizedItem]
         ) {
-            guard let item = addedItems.first else {
-                return
-            }
+            guard let item = addedItems.first else { return }
             if case let .barcode(barcode) = item, let payload = barcode.payloadStringValue {
                 onCode(payload)
             }

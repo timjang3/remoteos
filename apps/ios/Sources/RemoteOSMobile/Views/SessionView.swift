@@ -1,44 +1,47 @@
 import SwiftUI
 import RemoteOSCore
 
+// MARK: - Theme
+
+extension Color {
+    static let roBackground = Color(red: 0.035, green: 0.035, blue: 0.043)
+    static let roSurface = Color(red: 0.094, green: 0.094, blue: 0.106)
+    static let roSurfaceRaised = Color(red: 0.153, green: 0.153, blue: 0.165)
+    static let roText = Color(red: 0.980, green: 0.980, blue: 0.980)
+    static let roTextSecondary = Color(red: 0.631, green: 0.631, blue: 0.667)
+    static let roTextTertiary = Color(red: 0.443, green: 0.443, blue: 0.478)
+    static let roAccent = Color(red: 0.910, green: 0.769, blue: 0.722)
+    static let roSuccess = Color(red: 0.290, green: 0.871, blue: 0.502)
+    static let roDanger = Color(red: 0.973, green: 0.443, blue: 0.443)
+    static let roBorder = Color.white.opacity(0.06)
+    static let roBorderActive = Color.white.opacity(0.12)
+}
+
+// MARK: - Session View
+
 struct SessionView: View {
     let store: RemoteOSAppStore
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                sessionHeader
 
-            ScrollView {
-                VStack(spacing: 18) {
-                    streamSection
-                    transcriptSection
-                    promptSection
+                if store.session.selectedWindowID != nil {
+                    StreamPreviewView(store: store, maxHeight: geometry.size.height * 0.5)
+                    Color.roBorder.frame(height: 1)
                 }
-                .padding(20)
-            }
 
-            composer
+                chatArea
 
-            if let bannerText = disconnectedBannerText {
-                VStack(spacing: 10) {
-                    Text(bannerText)
-                        .font(.footnote.weight(.medium))
-                    if store.session.connectionState == .error {
-                        Button("Retry") {
-                            Task {
-                                await store.refreshHealth()
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
+                chatComposer
+
+                if let bannerText = disconnectedBannerText {
+                    disconnectionBanner(bannerText)
                 }
-                .padding(16)
-                .frame(maxWidth: .infinity)
-                .background(.thinMaterial)
             }
         }
-        .background(Color(uiColor: .systemGroupedBackground))
+        .background(Color.roBackground)
         .sheet(
             isPresented: Binding(
                 get: { store.session.isWindowSheetPresented },
@@ -46,14 +49,10 @@ struct SessionView: View {
             )
         ) {
             WindowPickerSheet(store: store)
-        }
-        .sheet(
-            isPresented: Binding(
-                get: { store.session.isModelSheetPresented },
-                set: { store.session.isModelSheetPresented = $0 }
-            )
-        ) {
-            ModelPickerSheet(store: store)
+                .presentationBackground(Color.roSurface)
+                .presentationCornerRadius(24)
+                .presentationDragIndicator(.visible)
+                .presentationDetents([.medium, .large])
         }
         .sheet(
             isPresented: Binding(
@@ -62,6 +61,10 @@ struct SessionView: View {
             )
         ) {
             SettingsSheet(store: store)
+                .presentationBackground(Color.roSurface)
+                .presentationCornerRadius(24)
+                .presentationDragIndicator(.visible)
+                .presentationDetents([.medium, .large])
         }
         .sheet(
             isPresented: Binding(
@@ -70,193 +73,203 @@ struct SessionView: View {
             )
         ) {
             TextEntrySheet(store: store)
+                .presentationBackground(Color.roSurface)
+                .presentationCornerRadius(24)
+                .presentationDragIndicator(.visible)
+                .presentationDetents([.medium, .large])
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 14) {
-            Circle()
-                .fill((store.session.hostStatus?.online ?? false) ? Color.green : Color.orange)
-                .frame(width: 10, height: 10)
+    // MARK: - Header
 
-            VStack(alignment: .leading, spacing: 4) {
+    private var sessionHeader: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill((store.session.hostStatus?.online ?? false) ? Color.roSuccess : Color.roTextTertiary)
+                .frame(width: 8, height: 8)
+
+            VStack(alignment: .leading, spacing: 2) {
                 Text(store.selectedWindow?.title ?? "RemoteOS")
-                    .font(.headline)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.roText)
+                    .lineLimit(1)
                 Text(store.storeStatusLine)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.roTextSecondary)
             }
 
             Spacer()
 
-            Button {
-                store.session.isModelSheetPresented = true
-            } label: {
-                Label(store.currentModelDisplayName, systemImage: "wand.and.stars")
-            }
-            .buttonStyle(.bordered)
+            modelMenu
 
             Button {
                 store.session.isWindowSheetPresented = true
             } label: {
                 Image(systemName: "rectangle.on.rectangle")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color.roTextSecondary)
+                    .frame(width: 34, height: 34)
+                    .background(Color.roSurfaceRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
-            .buttonStyle(.bordered)
 
             Button {
                 store.session.isSettingsPresented = true
             } label: {
                 Image(systemName: "gearshape")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color.roTextSecondary)
+                    .frame(width: 34, height: 34)
+                    .background(Color.roSurfaceRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
-            .buttonStyle(.bordered)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
-    }
-
-    private var streamSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            StreamPreviewView(store: store)
-                .frame(minHeight: 260, maxHeight: 380)
-
-            Picker("Input mode", selection: Binding(
-                get: { store.settings.inputMode },
-                set: { store.settings.inputMode = $0 }
-            )) {
-                ForEach(RemoteInputMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            if let semanticSummary = store.session.semanticSnapshot?.summary ?? store.selectedWindow?.semanticSummary {
-                Text(semanticSummary)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color.roSurface)
+        .overlay(alignment: .bottom) {
+            Color.roBorder.frame(height: 1)
         }
     }
 
-    private var transcriptSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if store.agent.items.isEmpty && store.agent.pendingPrompt == nil {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(store.selectedWindow == nil ? "Select a window to get started." : "Ask the agent to do something on your Mac.")
-                        .font(.headline)
-                    Text(store.selectedWindow == nil ? "Use the windows sheet to choose a live window, then stream and control it here." : "Commentary, prompt cards, and final answers appear here in the same order as the web client.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(18)
-                .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            } else {
-                LazyVStack(spacing: 12) {
-                    ForEach(store.agent.items) { item in
-                        transcriptBubble(item: item)
-                    }
-
-                    if let pendingPrompt = store.agent.pendingPrompt {
-                        HStack {
-                            Spacer()
-                            Text(pendingPrompt.body)
-                                .padding(12)
-                                .foregroundStyle(.white)
-                                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        }
+    private var modelMenu: some View {
+        Menu {
+            ForEach(RemoteOSAppStore.availableModels) { model in
+                Button(action: {
+                    Task { await store.selectModel(model.id) }
+                }) {
+                    if store.session.codexStatus?.model == model.id {
+                        Label(model.name, systemImage: "checkmark")
+                    } else {
+                        Text(model.name)
                     }
                 }
             }
-
-            if let error = store.agent.errorMessage ?? store.session.errorMessage {
-                Text(error)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .medium))
+                Text(store.currentModelDisplayName)
+                    .font(.system(size: 12, weight: .medium))
             }
+            .foregroundStyle(Color.roTextSecondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.roSurfaceRaised, in: Capsule())
         }
     }
 
-    private var promptSection: some View {
-        VStack(spacing: 12) {
-            ForEach(store.agent.prompts) { prompt in
-                PromptCardView(
-                    prompt: prompt,
-                    isSubmitting: store.agent.submittingPromptIDs.contains(prompt.id),
-                    onSubmit: { action, answers in
-                        Task {
-                            await store.respondToPrompt(promptID: prompt.id, action: action, answers: answers)
-                        }
-                    }
-                )
-            }
-        }
-    }
+    // MARK: - Chat Area
 
-    private var composer: some View {
-        VStack(spacing: 12) {
-            Divider()
-            HStack(alignment: .bottom, spacing: 12) {
-                TextEditor(text: Binding(
-                    get: { store.agent.draftPrompt },
-                    set: { store.agent.draftPrompt = $0 }
-                ))
-                .frame(minHeight: 44, maxHeight: 120)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-                if store.agent.turn?.status == .running {
-                    Button {
-                        Task {
-                            await store.cancelActiveTurn()
+    private var chatArea: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 14) {
+                    if store.agent.items.isEmpty && store.agent.pendingPrompt == nil {
+                        emptyState
+                            .padding(.top, 40)
+                    } else {
+                        ForEach(store.agent.items) { item in
+                            transcriptBubble(item: item)
+                                .id(item.id)
                         }
-                    } label: {
-                        Image(systemName: "stop.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-                } else {
-                    if store.session.speechCapabilities?.transcriptionAvailable ?? false {
-                        Button {
-                            Task {
-                                await store.toggleDictation()
+
+                        if let pendingPrompt = store.agent.pendingPrompt {
+                            HStack {
+                                Spacer(minLength: 60)
+                                Text(pendingPrompt.body)
+                                    .font(.body)
+                                    .foregroundStyle(Color.roBackground)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 10)
+                                    .background(
+                                        Color.roAccent.opacity(0.6),
+                                        in: UnevenRoundedRectangle(
+                                            topLeadingRadius: 18,
+                                            bottomLeadingRadius: 18,
+                                            bottomTrailingRadius: 4,
+                                            topTrailingRadius: 18
+                                        )
+                                    )
                             }
-                        } label: {
-                            Image(systemName: store.agent.dictationState == .recording ? "stop.circle.fill" : "mic.fill")
+                            .id("pending")
                         }
-                        .buttonStyle(.bordered)
-                        .tint(store.agent.dictationState == .recording ? .red : .accentColor)
+
+                        if store.agent.turn?.status == .running {
+                            TypingIndicator()
+                                .id("typing")
+                        }
                     }
 
-                    Button {
-                        Task {
-                            await store.sendPrompt()
-                        }
-                    } label: {
-                        Image(systemName: "paperplane.fill")
+                    if let error = store.agent.errorMessage ?? store.session.errorMessage {
+                        Text(error)
+                            .font(.footnote)
+                            .foregroundStyle(Color.roDanger)
+                            .padding(.horizontal, 4)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!store.isAgentReady || store.agent.draftPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                    ForEach(store.agent.prompts) { prompt in
+                        PromptCardView(
+                            prompt: prompt,
+                            isSubmitting: store.agent.submittingPromptIDs.contains(prompt.id),
+                            onSubmit: { action, answers in
+                                Task {
+                                    await store.respondToPrompt(promptID: prompt.id, action: action, answers: answers)
+                                }
+                            }
+                        )
+                        .id("prompt-\(prompt.id)")
+                    }
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 16)
+            .onChange(of: store.agent.items.count) { _, _ in
+                scrollToBottom(proxy: proxy)
+            }
+            .onChange(of: store.agent.pendingPrompt?.id) { _, _ in
+                scrollToBottom(proxy: proxy)
+            }
         }
-        .background(.ultraThinMaterial)
     }
 
-    private var disconnectedBannerText: String? {
-        switch store.session.connectionState {
-        case .bootstrapping:
-            return "Connecting to your Mac…"
-        case .connecting:
-            return "Establishing the live stream…"
-        case .error:
-            return store.session.errorMessage ?? "The RemoteOS session failed."
-        case .idle where store.hasPersistedClientSession:
-            return "Disconnected"
-        default:
-            return nil
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            if store.session.selectedWindowID == nil {
+                Image(systemName: "rectangle.on.rectangle.angled")
+                    .font(.system(size: 32, weight: .light))
+                    .foregroundStyle(Color.roTextTertiary)
+                Text("Select a window")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color.roText)
+                Text("Choose a Mac window to start streaming and controlling.")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.roTextSecondary)
+                    .multilineTextAlignment(.center)
+                Button {
+                    store.session.isWindowSheetPresented = true
+                } label: {
+                    Text("Browse Windows")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.roBackground)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .background(Color.roAccent, in: Capsule())
+                }
+                .padding(.top, 4)
+            } else {
+                Image(systemName: "text.bubble")
+                    .font(.system(size: 32, weight: .light))
+                    .foregroundStyle(Color.roTextTertiary)
+                Text("What can I help with?")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color.roText)
+                Text("Ask the agent to perform actions on your Mac, or tap the stream to interact directly.")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.roTextSecondary)
+                    .multilineTextAlignment(.center)
+            }
         }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 24)
     }
 
     @ViewBuilder
@@ -264,171 +277,418 @@ struct SessionView: View {
         switch item.kind {
         case .userMessage:
             HStack {
-                Spacer()
+                Spacer(minLength: 60)
                 Text(item.body ?? item.title)
-                    .padding(12)
-                    .foregroundStyle(.white)
-                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .font(.body)
+                    .foregroundStyle(Color.roBackground)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(
+                        Color.roAccent,
+                        in: UnevenRoundedRectangle(
+                            topLeadingRadius: 18,
+                            bottomLeadingRadius: 18,
+                            bottomTrailingRadius: 4,
+                            topTrailingRadius: 18
+                        )
+                    )
             }
         case .assistantMessage:
             HStack {
                 Text(item.body ?? item.title)
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                Spacer(minLength: 32)
+                    .font(.body)
+                    .foregroundStyle(Color.roText)
+                    .textSelection(.enabled)
+                Spacer(minLength: 60)
             }
         default:
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "waveform.path.ecg")
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.roTextTertiary)
+                    .frame(width: 20)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.title)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(Color.roText)
                     if let body = item.body, !body.isEmpty {
                         Text(body)
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.roTextSecondary)
                     }
                 }
                 Spacer()
             }
-            .padding(14)
-            .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .padding(12)
+            .background(Color.roSurface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.roBorder, lineWidth: 1)
+            )
+        }
+    }
+
+    // MARK: - Composer
+
+    private var chatComposer: some View {
+        VStack(spacing: 0) {
+            Color.roBorder.frame(height: 1)
+
+            HStack(alignment: .bottom, spacing: 6) {
+                TextEditor(text: Binding(
+                    get: { store.agent.draftPrompt },
+                    set: { store.agent.draftPrompt = $0 }
+                ))
+                .font(.body)
+                .foregroundStyle(Color.roText)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 20, maxHeight: 100)
+                .padding(.leading, 12)
+                .padding(.vertical, 6)
+
+                if store.agent.turn?.status == .running {
+                    Button {
+                        Task { await store.cancelActiveTurn() }
+                    } label: {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 28, height: 28)
+                            .background(Color.roDanger, in: Circle())
+                    }
+                    .padding(.trailing, 4)
+                    .padding(.bottom, 4)
+                } else {
+                    HStack(spacing: 2) {
+                        if store.session.speechCapabilities?.transcriptionAvailable ?? false {
+                            Button {
+                                Task { await store.toggleDictation() }
+                            } label: {
+                                Image(systemName: store.agent.dictationState == .recording ? "stop.circle.fill" : "mic.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(store.agent.dictationState == .recording ? Color.roDanger : Color.roTextTertiary)
+                                    .frame(width: 28, height: 28)
+                            }
+                        }
+
+                        Button {
+                            Task { await store.sendPrompt() }
+                        } label: {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(canSend ? Color.roBackground : Color.roTextTertiary)
+                                .frame(width: 28, height: 28)
+                                .background(canSend ? Color.roAccent : Color.roSurfaceRaised, in: Circle())
+                        }
+                        .disabled(!canSend)
+                    }
+                    .padding(.trailing, 4)
+                    .padding(.bottom, 4)
+                }
+            }
+            .background(Color.roBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Color.roBorder, lineWidth: 1))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.roSurface)
+        }
+    }
+
+    private var canSend: Bool {
+        store.isAgentReady && !store.agent.draftPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    // MARK: - Disconnection Banner
+
+    private func disconnectionBanner(_ text: String) -> some View {
+        VStack(spacing: 8) {
+            Text(text)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(Color.roText)
+            if store.session.connectionState == .error {
+                Button("Retry") {
+                    Task { await store.refreshHealth() }
+                }
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.roBackground)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+                .background(Color.roAccent, in: Capsule())
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity)
+        .background(Color.roSurfaceRaised)
+    }
+
+    private var disconnectedBannerText: String? {
+        switch store.session.connectionState {
+        case .bootstrapping:
+            return "Connecting to your Mac\u{2026}"
+        case .connecting:
+            return "Establishing live stream\u{2026}"
+        case .error:
+            return store.session.errorMessage ?? "Session failed."
+        case .idle where store.hasPersistedClientSession:
+            return "Disconnected"
+        default:
+            return nil
+        }
+    }
+
+    private func scrollToBottom(proxy: ScrollViewProxy) {
+        let target: String? = {
+            if store.agent.turn?.status == .running { return "typing" }
+            if store.agent.pendingPrompt != nil { return "pending" }
+            if let last = store.agent.prompts.last { return "prompt-\(last.id)" }
+            return store.agent.items.last?.id
+        }()
+        if let target {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo(target, anchor: .bottom)
+            }
         }
     }
 }
 
-private struct StreamPreviewView: View {
-    let store: RemoteOSAppStore
+// MARK: - Typing Indicator
 
-    @State private var zoom: CGFloat = 1
-    @State private var offset: CGSize = .zero
-    @State private var lastScrollTranslation: CGSize = .zero
+private struct TypingIndicator: View {
+    @State private var isAnimating = false
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.08, green: 0.11, blue: 0.16),
-                                Color(red: 0.14, green: 0.17, blue: 0.24)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
+        HStack(spacing: 5) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(Color.roTextTertiary)
+                    .frame(width: 6, height: 6)
+                    .offset(y: isAnimating ? -4 : 0)
+                    .animation(
+                        .easeInOut(duration: 0.4)
+                            .repeatForever(autoreverses: true)
+                            .delay(Double(index) * 0.15),
+                        value: isAnimating
                     )
-
-                if let previewImage = store.selectedPreviewImage {
-                    previewImage
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .scaleEffect(store.settings.inputMode == .view ? zoom : 1)
-                        .offset(store.settings.inputMode == .view ? offset : .zero)
-                        .contentShape(Rectangle())
-                        .gesture(viewModeGestures)
-                        .simultaneousGesture(tapGesture(in: geometry.size))
-                        .simultaneousGesture(doubleTapGesture(in: geometry.size))
-                        .simultaneousGesture(scrollGesture(in: geometry.size))
-                        .simultaneousGesture(dragGesture(in: geometry.size))
-                        .padding(12)
-                } else if store.selectedWindow == nil {
-                    VStack(spacing: 10) {
-                        Image(systemName: "rectangle.stack.badge.plus")
-                            .font(.system(size: 34))
-                        Text("Select a window")
-                            .font(.headline)
-                        Text("Choose a live Mac window from the windows sheet to start streaming.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding(24)
-                } else {
-                    ProgressView("Waiting for the live frame…")
-                }
-
-                if store.settings.inputMode == .keyboard, store.session.currentFrame != nil {
-                    VStack {
-                        Spacer()
-                        Button {
-                            store.session.isTextEntryPresented = true
-                        } label: {
-                            Label("Text input", systemImage: "keyboard")
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
-                                .background(.ultraThinMaterial, in: Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.bottom, 16)
-                    }
-                }
             }
         }
-        .frame(maxWidth: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(alignment: .topTrailing) {
-            if store.selectedWindow != nil {
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(Color.roSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear { isAnimating = true }
+    }
+}
+
+// MARK: - Stream Preview
+
+private struct StreamPreviewView: View {
+    let store: RemoteOSAppStore
+    let maxHeight: CGFloat
+
+    @State private var zoom: CGFloat = 1
+    @State private var lastZoom: CGFloat = 1
+    @State private var panOffset: CGSize = .zero
+    @State private var lastPanOffset: CGSize = .zero
+    @State private var lastScrollTranslation: CGSize = .zero
+    @State private var isPinching = false
+    @State private var isDragMode = false
+
+    var body: some View {
+        streamBody
+            .frame(maxWidth: .infinity, maxHeight: maxHeight)
+            .clipped()
+            // Gesture layer — GeometryReader only for coordinate capture, not sizing
+            .overlay {
+                GeometryReader { geometry in
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .gesture(pinchGesture)
+                        .simultaneousGesture(dragGesture(in: geometry.size))
+                        .simultaneousGesture(doubleTapGesture(in: geometry.size))
+                        .simultaneousGesture(tapGesture(in: geometry.size))
+                }
+            }
+            // Close button — top trailing
+            .overlay(alignment: .topTrailing) {
                 Button {
-                    Task {
-                        await store.deselectWindow()
-                    }
+                    Task { await store.deselectWindow() }
                 } label: {
                     Image(systemName: "xmark")
-                        .padding(10)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.roText.opacity(0.9))
+                        .frame(width: 24, height: 24)
                         .background(.ultraThinMaterial, in: Circle())
                 }
-                .padding(14)
+                .padding(8)
             }
+            // Bottom toolbar
+            .overlay(alignment: .bottom) {
+                HStack {
+                    interactionToggle
+
+                    Spacer()
+
+                    if zoom > 1.05 {
+                        Text(String(format: "%.1f\u{00D7}", zoom))
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Color.roText)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(.ultraThinMaterial, in: Capsule())
+                    }
+
+                    Button {
+                        store.session.isTextEntryPresented = true
+                    } label: {
+                        Image(systemName: "keyboard")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Color.roText.opacity(0.9))
+                            .frame(width: 26, height: 26)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 6)
+            }
+            .onChange(of: store.session.selectedWindowID) { _, _ in
+                zoom = 1
+                lastZoom = 1
+                panOffset = .zero
+                lastPanOffset = .zero
+            }
+    }
+
+    @ViewBuilder
+    private var streamBody: some View {
+        if let previewImage = store.selectedPreviewImage {
+            previewImage
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .scaleEffect(zoom)
+                .offset(panOffset)
+        } else {
+            Color.roBackground
+                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                .overlay { ProgressView().tint(Color.roTextTertiary) }
         }
     }
 
-    private var viewModeGestures: some Gesture {
-        SimultaneousGesture(
-            MagnificationGesture()
-                .onChanged { value in
-                    guard store.settings.inputMode == .view else { return }
-                    zoom = max(1, value)
-                },
-            DragGesture()
-                .onChanged { value in
-                    guard store.settings.inputMode == .view else { return }
-                    offset = value.translation
+    private var interactionToggle: some View {
+        Menu {
+            Button {
+                isDragMode = false
+            } label: {
+                if !isDragMode {
+                    Label("Scroll", systemImage: "checkmark")
+                } else {
+                    Text("Scroll")
                 }
-                .onEnded { _ in
-                    if store.settings.inputMode == .view {
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                            offset = .zero
+            }
+            Button {
+                isDragMode = true
+            } label: {
+                if isDragMode {
+                    Label("Drag", systemImage: "checkmark")
+                } else {
+                    Text("Drag")
+                }
+            }
+        } label: {
+            Image(systemName: isDragMode ? "hand.draw" : "arrow.up.arrow.down")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.roText.opacity(0.9))
+                .frame(width: 26, height: 26)
+                .background(.ultraThinMaterial, in: Circle())
+        }
+    }
+
+    // MARK: - Gestures
+
+    private var pinchGesture: some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                isPinching = true
+                zoom = max(1, lastZoom * value)
+            }
+            .onEnded { value in
+                isPinching = false
+                zoom = max(1, lastZoom * value)
+                lastZoom = zoom
+                if zoom < 1.15 {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        zoom = 1
+                        lastZoom = 1
+                        panOffset = .zero
+                        lastPanOffset = .zero
+                    }
+                }
+            }
+    }
+
+    private func dragGesture(in size: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 8)
+            .onChanged { value in
+                guard !isPinching else { return }
+                if zoom > 1 {
+                    panOffset = CGSize(
+                        width: lastPanOffset.width + value.translation.width,
+                        height: lastPanOffset.height + value.translation.height
+                    )
+                } else if isDragMode {
+                    // Drag mode: nothing on change, we send on end
+                } else {
+                    let delta = CGSize(
+                        width: value.translation.width - lastScrollTranslation.width,
+                        height: value.translation.height - lastScrollTranslation.height
+                    )
+                    lastScrollTranslation = value.translation
+                    Task {
+                        await store.handleScroll(
+                            deltaX: Double(delta.width * 1.5),
+                            deltaY: Double(delta.height * 1.5)
+                        )
+                    }
+                }
+            }
+            .onEnded { value in
+                if isPinching {
+                    lastScrollTranslation = .zero
+                    return
+                }
+                if zoom > 1 {
+                    lastPanOffset = panOffset
+                } else if isDragMode {
+                    guard let currentFrame = store.session.currentFrame else {
+                        lastScrollTranslation = .zero
+                        return
+                    }
+                    let imageSize = CGSize(
+                        width: currentFrame.payload.width,
+                        height: currentFrame.payload.height
+                    )
+                    if let startPt = normalizedPoint(value.startLocation, in: size, imageSize: imageSize),
+                       let endPt = normalizedPoint(value.location, in: size, imageSize: imageSize) {
+                        Task {
+                            await store.handleDrag(from: startPt, to: endPt)
                         }
                     }
                 }
-        )
+                lastScrollTranslation = .zero
+            }
     }
 
     private func tapGesture(in size: CGSize) -> some Gesture {
         SpatialTapGesture()
             .onEnded { value in
-                guard store.settings.inputMode == .tap,
-                      let currentFrame = store.session.currentFrame,
-                      let normalizedPoint = normalizedPoint(
-                        value.location,
-                        in: size,
-                        imageSize: CGSize(
-                            width: currentFrame.payload.width,
-                            height: currentFrame.payload.height
-                        )
-                      ) else {
-                    return
-                }
-
+                guard let currentFrame = store.session.currentFrame else { return }
+                let imageSize = CGSize(
+                    width: currentFrame.payload.width,
+                    height: currentFrame.payload.height
+                )
+                let adjustedPt = adjustPoint(value.location, in: size)
+                guard let normalPt = normalizedPoint(adjustedPt, in: size, imageSize: imageSize) else { return }
                 Task {
-                    await store.handleTap(
-                        normalizedX: normalizedPoint.x,
-                        normalizedY: normalizedPoint.y,
-                        clickCount: 1
-                    )
+                    await store.handleTap(normalizedX: normalPt.x, normalizedY: normalPt.y, clickCount: 1)
                 }
             }
     }
@@ -436,85 +696,33 @@ private struct StreamPreviewView: View {
     private func doubleTapGesture(in size: CGSize) -> some Gesture {
         SpatialTapGesture(count: 2)
             .onEnded { value in
-                guard store.settings.inputMode == .tap,
-                      let currentFrame = store.session.currentFrame,
-                      let normalizedPoint = normalizedPoint(
-                        value.location,
-                        in: size,
-                        imageSize: CGSize(
-                            width: currentFrame.payload.width,
-                            height: currentFrame.payload.height
-                        )
-                      ) else {
-                    return
-                }
-
-                Task {
-                    await store.handleTap(
-                        normalizedX: normalizedPoint.x,
-                        normalizedY: normalizedPoint.y,
-                        clickCount: 2
-                    )
-                }
-            }
-    }
-
-    private func scrollGesture(in size: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 6)
-            .onChanged { value in
-                guard store.settings.inputMode == .scroll else { return }
-                let delta = CGSize(
-                    width: value.translation.width - lastScrollTranslation.width,
-                    height: value.translation.height - lastScrollTranslation.height
+                guard let currentFrame = store.session.currentFrame else { return }
+                let imageSize = CGSize(
+                    width: currentFrame.payload.width,
+                    height: currentFrame.payload.height
                 )
-                lastScrollTranslation = value.translation
-
+                let adjustedPt = adjustPoint(value.location, in: size)
+                guard let normalPt = normalizedPoint(adjustedPt, in: size, imageSize: imageSize) else { return }
                 Task {
-                    await store.handleScroll(
-                        deltaX: Double(delta.width * 1.5),
-                        deltaY: Double(delta.height * 1.5)
-                    )
+                    await store.handleTap(normalizedX: normalPt.x, normalizedY: normalPt.y, clickCount: 2)
                 }
-            }
-            .onEnded { _ in
-                lastScrollTranslation = .zero
             }
     }
 
-    private func dragGesture(in size: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 8)
-            .onEnded { value in
-                guard store.settings.inputMode == .drag,
-                      let currentFrame = store.session.currentFrame,
-                      let startPoint = normalizedPoint(
-                        value.startLocation,
-                        in: size,
-                        imageSize: CGSize(
-                            width: currentFrame.payload.width,
-                            height: currentFrame.payload.height
-                        )
-                      ),
-                      let endPoint = normalizedPoint(
-                        value.location,
-                        in: size,
-                        imageSize: CGSize(
-                            width: currentFrame.payload.width,
-                            height: currentFrame.payload.height
-                        )
-                      ) else {
-                    return
-                }
+    // MARK: - Coordinate Helpers
 
-                Task {
-                    await store.handleDrag(from: startPoint, to: endPoint)
-                }
-            }
+    private func adjustPoint(_ point: CGPoint, in containerSize: CGSize) -> CGPoint {
+        guard zoom > 1 else { return point }
+        let center = CGPoint(x: containerSize.width / 2, y: containerSize.height / 2)
+        return CGPoint(
+            x: center.x + (point.x - center.x - panOffset.width) / zoom,
+            y: center.y + (point.y - center.y - panOffset.height) / zoom
+        )
     }
 
     private func normalizedPoint(_ point: CGPoint, in containerSize: CGSize, imageSize: CGSize) -> CGPoint? {
-        guard containerSize.width > 0, containerSize.height > 0, imageSize.width > 0, imageSize.height > 0 else {
-            return nil
-        }
+        guard containerSize.width > 0, containerSize.height > 0,
+              imageSize.width > 0, imageSize.height > 0 else { return nil }
 
         let imageAspect = imageSize.width / imageSize.height
         let containerAspect = containerSize.width / containerSize.height
@@ -531,21 +739,18 @@ private struct StreamPreviewView: View {
             y: (containerSize.height - drawSize.height) / 2
         )
 
-        guard point.x >= origin.x,
-              point.y >= origin.y,
+        guard point.x >= origin.x, point.y >= origin.y,
               point.x <= origin.x + drawSize.width,
-              point.y <= origin.y + drawSize.height else {
-            return nil
-        }
+              point.y <= origin.y + drawSize.height else { return nil }
 
-        let x = (point.x - origin.x) / drawSize.width
-        let y = (point.y - origin.y) / drawSize.height
         return CGPoint(
-            x: min(max(x, 0), 0.999_999),
-            y: min(max(y, 0), 0.999_999)
+            x: min(max((point.x - origin.x) / drawSize.width, 0), 0.999_999),
+            y: min(max((point.y - origin.y) / drawSize.height, 0), 0.999_999)
         )
     }
 }
+
+// MARK: - Prompt Card
 
 private struct PromptCardView: View {
     let prompt: AgentPromptPayload
@@ -560,36 +765,37 @@ private struct PromptCardView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(prompt.source == .computerUse ? "Computer Use" : "Codex")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                    Text(prompt.source == .computerUse ? "COMPUTER USE" : "CODEX")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Color.roAccent)
                     Text(prompt.title)
-                        .font(.headline)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.roText)
                 }
-
                 Spacer()
-
                 if isSubmitting {
                     ProgressView()
                         .controlSize(.small)
+                        .tint(Color.roAccent)
                 }
             }
 
             if let body = prompt.body, !body.isEmpty {
                 Text(body)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.roTextSecondary)
             }
 
             if !prompt.questions.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 12) {
                     ForEach(prompt.questions, id: \.id) { question in
                         VStack(alignment: .leading, spacing: 8) {
                             Text(question.header)
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color.roTextSecondary)
                             Text(question.question)
                                 .font(.subheadline)
+                                .foregroundStyle(Color.roText)
 
                             if let options = question.options, !options.isEmpty {
                                 Picker(question.header, selection: Binding(
@@ -605,6 +811,7 @@ private struct PromptCardView: View {
                                     }
                                 }
                                 .pickerStyle(.menu)
+                                .tint(Color.roAccent)
                             }
 
                             let selectedValue = selectedOptions[question.id] ?? ""
@@ -619,7 +826,15 @@ private struct PromptCardView: View {
                                 )
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
-                                .textFieldStyle(.roundedBorder)
+                                .font(.body)
+                                .foregroundStyle(Color.roText)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 12)
+                                .background(Color.roBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(Color.roBorderActive, lineWidth: 1)
+                                )
                             }
                         }
                     }
@@ -627,7 +842,7 @@ private struct PromptCardView: View {
                     if let validationError {
                         Text(validationError)
                             .font(.footnote)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Color.roDanger)
                     }
 
                     Button("Continue") {
@@ -639,231 +854,293 @@ private struct PromptCardView: View {
                         validationError = nil
                         onSubmit(.submit, answers)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.roBackground)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 12)
+                    .background(Color.roAccent, in: Capsule())
                     .disabled(isSubmitting)
+                    .opacity(isSubmitting ? 0.6 : 1)
                 }
             }
 
             if let choices = prompt.choices, !choices.isEmpty {
-                HStack {
+                HStack(spacing: 8) {
                     ForEach(choices, id: \.id) { choice in
                         if choice.id == "accept" {
                             Button(choice.label) {
-                                guard let action = AgentPromptResponseAction(rawValue: choice.id) else {
-                                    return
-                                }
+                                guard let action = AgentPromptResponseAction(rawValue: choice.id) else { return }
                                 onSubmit(action, [:])
                             }
-                            .buttonStyle(.borderedProminent)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.roBackground)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                            .background(Color.roAccent, in: Capsule())
                             .disabled(isSubmitting)
+                            .opacity(isSubmitting ? 0.6 : 1)
                         } else {
                             Button(choice.label) {
-                                guard let action = AgentPromptResponseAction(rawValue: choice.id) else {
-                                    return
-                                }
+                                guard let action = AgentPromptResponseAction(rawValue: choice.id) else { return }
                                 onSubmit(action, [:])
                             }
-                            .buttonStyle(.bordered)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(Color.roText)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                            .background(Color.roSurfaceRaised, in: Capsule())
                             .disabled(isSubmitting)
+                            .opacity(isSubmitting ? 0.6 : 1)
                         }
                     }
                 }
             }
         }
         .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(
+            LinearGradient(
+                colors: [Color.roAccent.opacity(0.06), Color.clear],
+                startPoint: .top,
+                endPoint: .bottom
+            ),
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        colors: [Color.roAccent.opacity(0.3), Color.roAccent.opacity(0.05)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
+        )
     }
 
     private func buildAnswers() -> [String: AgentPromptAnswerPayload] {
         var answers: [String: AgentPromptAnswerPayload] = [:]
-
         for question in prompt.questions {
             let selectedValue = selectedOptions[question.id]
             let typedValue = textAnswers[question.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let resolvedValue = (selectedValue == "__other__" || selectedValue?.isEmpty != false) ? typedValue : (selectedValue ?? "")
-
-            guard !resolvedValue.isEmpty else {
-                return [:]
-            }
-
+            guard !resolvedValue.isEmpty else { return [:] }
             answers[question.id] = AgentPromptAnswerPayload(answers: [resolvedValue])
         }
-
         return answers
     }
 }
+
+// MARK: - Window Picker Sheet
 
 private struct WindowPickerSheet: View {
     let store: RemoteOSAppStore
 
     var body: some View {
         NavigationStack {
-            List(store.session.windows) { window in
-                Button {
-                    Task {
-                        await store.selectWindow(window)
-                    }
-                } label: {
-                    HStack(spacing: 12) {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color(uiColor: .secondarySystemGroupedBackground))
-                            .overlay {
-                                if let snapshot = store.session.snapshots[window.id] {
-                                    snapshot
-                                        .resizable()
-                                        .scaledToFill()
-                                } else {
-                                    Image(systemName: "macwindow")
-                                        .foregroundStyle(.secondary)
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(store.session.windows) { window in
+                        Button {
+                            Task { await store.selectWindow(window) }
+                        } label: {
+                            HStack(spacing: 12) {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.roSurfaceRaised)
+                                    .overlay {
+                                        if let snapshot = store.session.snapshots[window.id] {
+                                            snapshot.resizable().scaledToFill()
+                                        } else {
+                                            Image(systemName: "macwindow")
+                                                .foregroundStyle(Color.roTextTertiary)
+                                        }
+                                    }
+                                    .frame(width: 64, height: 48)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(window.ownerName)
+                                        .font(.system(size: 15, weight: .medium))
+                                        .foregroundStyle(Color.roText)
+                                    Text(window.title)
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(Color.roTextSecondary)
+                                        .lineLimit(2)
+                                }
+
+                                Spacer()
+
+                                if store.session.selectedWindowID == window.id {
+                                    Circle()
+                                        .fill(Color.roSuccess)
+                                        .frame(width: 8, height: 8)
                                 }
                             }
-                            .frame(width: 72, height: 52)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(window.ownerName)
-                                .font(.headline)
-                            Text(window.title)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
+                            .padding(12)
+                            .background(Color.roSurfaceRaised, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
-
-                        Spacer()
-
-                        if store.session.selectedWindowID == window.id {
-                            Image(systemName: "dot.radiowaves.left.and.right")
-                                .foregroundStyle(.green)
-                        }
+                        .buttonStyle(.plain)
                     }
                 }
-                .buttonStyle(.plain)
+                .padding(16)
             }
+            .background(Color.roSurface)
             .navigationTitle("Windows")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
                         store.session.isWindowSheetPresented = false
                     }
+                    .foregroundStyle(Color.roAccent)
                 }
             }
         }
     }
 }
 
-private struct ModelPickerSheet: View {
-    let store: RemoteOSAppStore
-
-    var body: some View {
-        NavigationStack {
-            List(RemoteOSAppStore.availableModels) { model in
-                Button {
-                    Task {
-                        await store.selectModel(model.id)
-                    }
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(model.name)
-                                .font(.headline)
-                            Text(model.description)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        Spacer()
-
-                        if store.session.codexStatus?.model == model.id {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-            .navigationTitle("Model")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") {
-                        store.session.isModelSheetPresented = false
-                    }
-                }
-            }
-        }
-    }
-}
+// MARK: - Settings Sheet
 
 private struct SettingsSheet: View {
     let store: RemoteOSAppStore
 
     var body: some View {
         NavigationStack {
-            List {
-                Section("Connection") {
-                    LabeledContent("Control plane", value: store.pairing.controlPlaneBaseURL)
-                    LabeledContent("Client name", value: store.pairing.clientName)
-                    LabeledContent("Authentication", value: store.pairing.isAuthenticated ? (store.pairing.signedInEmail ?? "Signed in") : "Not signed in")
-                }
+            ScrollView {
+                VStack(spacing: 20) {
+                    settingsSection("Connection") {
+                        settingsRow("Control plane", value: store.pairing.controlPlaneBaseURL)
+                        Color.roBorder.frame(height: 1).padding(.horizontal, 16)
+                        settingsRow("Client", value: store.pairing.clientName)
+                        Color.roBorder.frame(height: 1).padding(.horizontal, 16)
+                        settingsRow("Auth", value: store.pairing.isAuthenticated ? (store.pairing.signedInEmail ?? "Signed in") : "Not signed in")
+                    }
 
-                Section("Streaming") {
-                    LabeledContent("Recommended profile", value: store.currentStreamProfile.rawValue)
-                    Toggle("Low data mode", isOn: Binding(
-                        get: { store.settings.lowDataMode },
-                        set: { store.settings.lowDataMode = $0 }
-                    ))
-                }
+                    settingsSection("Streaming") {
+                        settingsRow("Profile", value: store.currentStreamProfile.rawValue)
+                        Color.roBorder.frame(height: 1).padding(.horizontal, 16)
+                        HStack {
+                            Text("Low data mode")
+                                .font(.subheadline)
+                                .foregroundStyle(Color.roText)
+                            Spacer()
+                            Toggle("", isOn: Binding(
+                                get: { store.settings.lowDataMode },
+                                set: { store.settings.lowDataMode = $0 }
+                            ))
+                            .tint(Color.roAccent)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                    }
 
-                if !store.session.traceEvents.isEmpty {
-                    Section("Recent traces") {
-                        ForEach(store.session.traceEvents.prefix(8)) { event in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(event.kind)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                                Text(event.message)
-                                    .font(.footnote)
+                    settingsSection("Actions") {
+                        Button {
+                            Task { await store.resetThread() }
+                        } label: {
+                            HStack {
+                                Image(systemName: "plus.message")
+                                    .font(.system(size: 14))
+                                Text("New Chat")
+                                    .font(.subheadline)
+                                Spacer()
                             }
-                            .padding(.vertical, 4)
+                            .foregroundStyle(Color.roAccent)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
                         }
                     }
-                }
 
-                Section {
-                    Button(store.requiresAuthentication ? "Sign out" : "Disconnect", role: .destructive) {
-                        Task {
-                            await store.disconnect(clearAuthToken: store.requiresAuthentication)
+                    if !store.session.traceEvents.isEmpty {
+                        settingsSection("Recent Traces") {
+                            ForEach(store.session.traceEvents.prefix(6)) { event in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(event.kind)
+                                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(Color.roTextTertiary)
+                                    Text(event.message)
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(Color.roTextSecondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                            }
                         }
                     }
+
+                    Button {
+                        Task { await store.disconnect(clearAuthToken: store.requiresAuthentication) }
+                    } label: {
+                        Text(store.requiresAuthentication ? "Sign Out" : "Disconnect")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(Color.roDanger)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Color.roDanger.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .padding(.horizontal, 16)
                 }
+                .padding(.vertical, 8)
             }
+            .background(Color.roSurface)
             .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
                         store.session.isSettingsPresented = false
                     }
+                    .foregroundStyle(Color.roAccent)
                 }
             }
         }
     }
+
+    private func settingsSection(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title.uppercased())
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.roTextTertiary)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+
+            VStack(spacing: 0) {
+                content()
+            }
+            .background(Color.roSurfaceRaised, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .padding(.horizontal, 16)
+        }
+    }
+
+    private func settingsRow(_ label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(Color.roTextSecondary)
+            Spacer()
+            Text(value)
+                .font(.subheadline)
+                .foregroundStyle(Color.roText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
 }
+
+// MARK: - Text Entry Sheet
 
 private struct TextEntrySheet: View {
     let store: RemoteOSAppStore
 
     private let specialKeys = [
-        "return",
-        "tab",
-        "escape",
-        "delete",
-        "up",
-        "down",
-        "left",
-        "right",
-        "command",
-        "control",
-        "option",
-        "shift"
+        "return", "tab", "escape", "delete",
+        "up", "down", "left", "right",
+        "command", "control", "option", "shift"
     ]
 
     var body: some View {
@@ -873,42 +1150,61 @@ private struct TextEntrySheet: View {
                     get: { store.session.textEntryValue },
                     set: { store.session.textEntryValue = $0 }
                 ))
-                .frame(minHeight: 160)
-                .padding(12)
-                .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .font(.body)
+                .foregroundStyle(Color.roText)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 120)
+                .padding(14)
+                .background(Color.roBackground, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.roBorderActive, lineWidth: 1)
+                )
 
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 10)], spacing: 10) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 80), spacing: 8)], spacing: 8) {
                     ForEach(specialKeys, id: \.self) { key in
-                        Button(key.replacingOccurrences(of: "_", with: " ").capitalized) {
-                            Task {
-                                await store.sendSpecialKey(key)
-                            }
+                        Button(key.capitalized) {
+                            Task { await store.sendSpecialKey(key) }
                         }
-                        .buttonStyle(.bordered)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Color.roText)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.roSurfaceRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
                 }
 
-                Button("Send text") {
-                    Task {
-                        await store.submitTextEntry()
-                    }
+                Button {
+                    Task { await store.submitTextEntry() }
+                } label: {
+                    Text("Send Text")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.roBackground)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.roAccent, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                .buttonStyle(.borderedProminent)
 
                 Spacer()
             }
             .padding(20)
+            .background(Color.roSurface)
             .navigationTitle("Keyboard")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
                         store.session.isTextEntryPresented = false
                     }
+                    .foregroundStyle(Color.roAccent)
                 }
             }
         }
     }
 }
+
+// MARK: - Helpers
 
 private extension RemoteOSAppStore {
     var currentModelDisplayName: String {
@@ -924,9 +1220,9 @@ private extension RemoteOSAppStore {
         case .connected:
             return (session.hostStatus?.online ?? false) ? "Connected" : "Mac offline"
         case .bootstrapping:
-            return "Bootstrapping"
+            return "Bootstrapping\u{2026}"
         case .connecting:
-            return "Connecting"
+            return "Connecting\u{2026}"
         case .error:
             return "Error"
         case .idle:

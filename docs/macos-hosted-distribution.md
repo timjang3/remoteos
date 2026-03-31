@@ -45,6 +45,7 @@ Artifacts land in `dist/macos-hosted/`:
 - `RemoteOS.zip`
 - `RemoteOS.dmg`
 - `SHA256SUMS.txt`
+- `CODESIGN.txt`
 
 ## Required environment
 
@@ -55,7 +56,8 @@ Artifacts land in `dist/macos-hosted/`:
 - `REMOTEOS_SIGNING_IDENTITY`
   - Optional for local verification.
   - Required for public distribution.
-  - If omitted, the packaging script will auto-select a stable local signing identity when one is available.
+  - If omitted, the packaging script auto-detects a local signing identity for verification builds, preferring `Developer ID Application:` when available.
+  - Public builds must keep the same bundle identifier and Developer ID designated requirement across releases. If those change, macOS TCC can treat the update as a different app and users may see Accessibility / Screen Recording enabled in Settings while the new build still fails permission checks.
   - If the script falls back to ad-hoc signing, macOS permissions like Accessibility and Screen Recording can be invalidated on every rebuild.
 - `REMOTEOS_NOTARY_PROFILE` or `REMOTEOS_NOTARY_APPLE_ID` + `REMOTEOS_NOTARY_APPLE_PASSWORD` + `REMOTEOS_NOTARY_TEAM_ID`
   - Optional for local verification.
@@ -93,6 +95,12 @@ Recommended public distribution flow:
 5. Publish the GitHub Release and link users to that release or its `.dmg`.
 
 That gives end users a clean download surface without exposing maintainer-only credentials in the repo.
+
+## Update behavior and privacy permissions
+
+For normal drag-install updates and Sparkle updates, users should not need to re-grant Accessibility or Screen Recording as long as the new build is signed like the previous one. Apple’s code signing guidance treats a new version as the same program when it keeps the same identifier and designated requirement.
+
+If users report that macOS still shows RemoteOS enabled but the app reports the permissions as missing, compare the old and new `codesign -dr -` output. The generated `CODESIGN.txt` artifact captures that information for each build.
 
 ## Local OSS run
 

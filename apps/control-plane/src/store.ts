@@ -242,6 +242,7 @@ export class MemoryBrokerStore extends BrokerRuntimeState implements BrokerStore
     deviceId: string;
     deviceSecret: string;
     publicPairBaseUrl: string;
+    publicHttpBaseUrl: string;
     userId?: string | null;
     requireOwnership?: boolean;
   }) {
@@ -268,7 +269,11 @@ export class MemoryBrokerStore extends BrokerRuntimeState implements BrokerStore
       claimed: false,
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 1000 * 60 * 15).toISOString(),
-      pairingUrl: this.buildPairingUrl(input.publicPairBaseUrl, pairingCode)
+      pairingUrl: this.buildPairingUrl(
+        input.publicPairBaseUrl,
+        input.publicHttpBaseUrl,
+        pairingCode
+      )
     };
     this.pairingsByCode.set(session.pairingCode, session);
     this.pairingsById.set(session.id, session);

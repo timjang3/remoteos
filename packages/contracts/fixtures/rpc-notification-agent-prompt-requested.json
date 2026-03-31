@@ -1,0 +1,36 @@
+{
+  "jsonrpc": "2.0",
+  "method": "agent.prompt.requested",
+  "params": {
+    "id": "prompt_1",
+    "turnId": "turn_1",
+    "source": "codex",
+    "kind": "request_user_input",
+    "title": "Need confirmation",
+    "body": "Choose a browser profile.",
+    "questions": [
+      {
+        "id": "profile",
+        "header": "Profile",
+        "question": "Which profile should be used?",
+        "isOther": false,
+        "isSecret": false,
+        "options": [
+          {
+            "label": "Work",
+            "description": "Use the work profile."
+          }
+        ]
+      }
+    ],
+    "choices": [
+      {
+        "id": "accept",
+        "label": "Accept",
+        "description": "Continue with the selected profile."
+      }
+    ],
+    "createdAt": "2026-03-30T12:00:00.000Z",
+    "updatedAt": "2026-03-30T12:00:00.000Z"
+  }
+}

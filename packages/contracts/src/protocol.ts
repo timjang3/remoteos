@@ -94,8 +94,15 @@ export const windowSelectParamsSchema = z.object({
   windowId: z.number().int().nonnegative()
 });
 
+export const streamProfileSchema = z.enum([
+  "full",
+  "balanced",
+  "low_data"
+]);
+
 export const streamStartParamsSchema = z.object({
-  windowId: z.number().int().nonnegative()
+  windowId: z.number().int().nonnegative(),
+  profile: streamProfileSchema.optional()
 });
 
 export const streamStopParamsSchema = z.object({

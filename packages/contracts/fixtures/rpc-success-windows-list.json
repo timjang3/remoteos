@@ -1,0 +1,27 @@
+{
+  "jsonrpc": "2.0",
+  "id": "7",
+  "result": {
+    "windows": [
+      {
+        "id": 42,
+        "ownerPid": 100,
+        "ownerName": "Terminal",
+        "appBundleId": "com.apple.Terminal",
+        "title": "shell",
+        "bounds": {
+          "x": 32,
+          "y": 64,
+          "width": 1280,
+          "height": 800
+        },
+        "isOnScreen": true,
+        "capabilities": [
+          "ax_read",
+          "pixel_fallback"
+        ],
+        "semanticSummary": "A terminal window showing RemoteOS logs."
+      }
+    ]
+  }
+}

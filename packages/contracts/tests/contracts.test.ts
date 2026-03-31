@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -68,6 +70,18 @@ describe("contracts", () => {
     expect(rpcRequestSchema.parse(request).method).toBe("stream.start");
     expect(streamStartParamsSchema.parse(request.params)).toMatchObject({
       windowId: 9,
+    });
+  });
+
+  it("parses the shared mobile stream profile fixture", () => {
+    const request = JSON.parse(
+      readFileSync(new URL("../fixtures/rpc-request-stream-start-balanced.json", import.meta.url), "utf8")
+    );
+
+    expect(rpcRequestSchema.parse(request).method).toBe("stream.start");
+    expect(streamStartParamsSchema.parse(request.params)).toMatchObject({
+      windowId: 9,
+      profile: "balanced",
     });
   });
 

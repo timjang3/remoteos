@@ -97,9 +97,14 @@ export abstract class BrokerRuntimeState {
     return session;
   }
 
-  protected buildPairingUrl(publicPairBaseUrl: string, pairingCode: string) {
+  protected buildPairingUrl(
+    publicPairBaseUrl: string,
+    publicHttpBaseUrl: string,
+    pairingCode: string
+  ) {
     const pairingUrl = new URL(publicPairBaseUrl);
     pairingUrl.searchParams.set("code", pairingCode);
+    pairingUrl.searchParams.set("api", publicHttpBaseUrl);
     return pairingUrl.toString();
   }
 

@@ -8,6 +8,7 @@ import {
   uniqueIndex
 } from "drizzle-orm/pg-core";
 
+import type { MobileAuthProvider } from "../mobileAuthStore.js";
 import { user } from "./authSchema.js";
 
 export const devices = pgTable(
@@ -72,7 +73,8 @@ export const pairings = pgTable(
       mode: "date",
       withTimezone: true
     }).notNull(),
-    pairingBaseUrl: text("pairing_base_url").notNull()
+    pairingBaseUrl: text("pairing_base_url").notNull(),
+    controlPlaneBaseUrl: text("control_plane_base_url").notNull()
   },
   (table) => [
     uniqueIndex("pairings_pairing_code_hash_idx").on(table.pairingCodeHash),
@@ -108,5 +110,48 @@ export const deviceEnrollments = pgTable(
     uniqueIndex("device_enrollments_token_hash_idx").on(table.tokenHash),
     index("device_enrollments_device_id_idx").on(table.deviceId),
     index("device_enrollments_approved_by_user_id_idx").on(table.approvedByUserId)
+  ]
+);
+
+export const mobileAuthFlows = pgTable(
+  "mobile_auth_flows",
+  {
+    flowIdHash: text("flow_id_hash").primaryKey(),
+    provider: text("provider").$type<MobileAuthProvider>().notNull(),
+    redirectUri: text("redirect_uri").notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "date",
+      withTimezone: true
+    }).notNull(),
+    expiresAt: timestamp("expires_at", {
+      mode: "date",
+      withTimezone: true
+    }).notNull()
+  },
+  (table) => [
+    index("mobile_auth_flows_expires_at_idx").on(table.expiresAt)
+  ]
+);
+
+export const mobileAuthExchanges = pgTable(
+  "mobile_auth_exchanges",
+  {
+    codeHash: text("code_hash").primaryKey(),
+    authTokenCiphertext: text("auth_token_ciphertext").notNull(),
+    userId: text("user_id").notNull(),
+    userName: text("user_name").notNull(),
+    userEmail: text("user_email").notNull(),
+    userImage: text("user_image"),
+    createdAt: timestamp("created_at", {
+      mode: "date",
+      withTimezone: true
+    }).notNull(),
+    expiresAt: timestamp("expires_at", {
+      mode: "date",
+      withTimezone: true
+    }).notNull()
+  },
+  (table) => [
+    index("mobile_auth_exchanges_expires_at_idx").on(table.expiresAt)
   ]
 );

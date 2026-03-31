@@ -4,7 +4,9 @@ export type BrokerCredentialPurpose =
   | "device_secret"
   | "client_token"
   | "pairing_code"
-  | "enrollment_token";
+  | "enrollment_token"
+  | "mobile_auth_flow"
+  | "mobile_auth_code";
 
 const HASH_VERSION = "v1";
 

@@ -22,6 +22,7 @@ export type ControlPlaneConfig = {
   publicWsBaseUrl: string;
   publicPairBaseUrl: string;
   allowedOrigins: string[];
+  mobileAuthRedirectSchemes: string[];
   trustProxy: ControlPlaneTrustProxy;
   googleAuthEnabled: boolean;
   googleClientId: string | null;
@@ -92,6 +93,25 @@ function parsePositiveInteger(
   return parsed;
 }
 
+function parseMobileAuthRedirectSchemes(value: string | undefined) {
+  const entries = (value ?? "remoteos")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (entries.length === 0) {
+    throw new Error("MOBILE_AUTH_REDIRECT_SCHEMES must include at least one URI scheme");
+  }
+
+  for (const scheme of entries) {
+    if (!/^[a-z][a-z0-9+.-]*$/i.test(scheme)) {
+      throw new Error(`Invalid mobile auth redirect scheme: ${scheme}`);
+    }
+  }
+
+  return [...new Set(entries)];
+}
+
 function assertSecurePublicUrl(name: string, url: URL, allowedProtocol: "https:" | "wss:") {
   if (!isLoopbackHostname(url.hostname) && url.protocol !== allowedProtocol) {
     throw new Error(`${name} must use ${allowedProtocol.slice(0, -1)} in hosted mode`);
@@ -121,6 +141,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ControlPlaneCo
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
+  const mobileAuthRedirectSchemes = parseMobileAuthRedirectSchemes(env.MOBILE_AUTH_REDIRECT_SCHEMES);
   const trustProxy = parseTrustProxy(env.TRUST_PROXY, authMode);
   const googleClientId = env.GOOGLE_CLIENT_ID ?? null;
   const googleClientSecret = env.GOOGLE_CLIENT_SECRET ?? null;
@@ -177,6 +198,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ControlPlaneCo
     publicWsBaseUrl,
     publicPairBaseUrl,
     allowedOrigins,
+    mobileAuthRedirectSchemes,
     trustProxy,
     googleAuthEnabled: Boolean(googleClientId && googleClientSecret),
     googleClientId,

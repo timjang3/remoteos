@@ -43,6 +43,7 @@ APP_ROOT="$DIST_DIR/$APP_NAME.app"
 ZIP_PATH="$DIST_DIR/$APP_NAME.zip"
 DMG_PATH="$DIST_DIR/$APP_NAME.dmg"
 CHECKSUM_PATH="$DIST_DIR/SHA256SUMS.txt"
+CODESIGN_REPORT_PATH="$DIST_DIR/CODESIGN.txt"
 
 function require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -58,8 +59,8 @@ function detect_signing_identity() {
 
     identities=("${(@f)$(security find-identity -v -p codesigning 2>/dev/null)}")
     preferred_fragments=(
-        "RemoteOS Local Code Signing"
         "Developer ID Application:"
+        "RemoteOS Local Code Signing"
         "Apple Development:"
     )
 
@@ -76,6 +77,11 @@ function detect_signing_identity() {
     done
 
     return 0
+}
+
+function is_distribution_identity() {
+    local identity_name="$1"
+    [[ "$identity_name" == Developer\ ID\ Application:* ]]
 }
 
 function notarize_file() {
@@ -222,6 +228,14 @@ if [[ "${REMOTEOS_ALLOW_INSECURE_BASE_URL:-0}" != "1" && "$BASE_URL" != https://
     exit 1
 fi
 
+if [[ -n "$SIGNING_IDENTITY" && ( -n "$NOTARY_PROFILE" || ( -n "$APPLE_ID" && -n "$APPLE_PASSWORD" && -n "$APPLE_TEAM_ID" ) ) ]]; then
+    if ! is_distribution_identity "$SIGNING_IDENTITY"; then
+        echo "Notarized hosted builds must use a Developer ID Application signing identity." >&2
+        echo "Current identity: $SIGNING_IDENTITY" >&2
+        exit 1
+    fi
+fi
+
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
@@ -340,7 +354,7 @@ fi
 CODESIGN_ARGS=()
 
 if [[ -n "$SIGNING_IDENTITY" ]]; then
-    if [[ "$SIGNING_IDENTITY" == Developer\ ID\ Application:* ]]; then
+    if is_distribution_identity "$SIGNING_IDENTITY"; then
         echo "Signing app with Developer ID identity..."
         CODESIGN_ARGS=(--timestamp --options runtime)
     else
@@ -349,6 +363,8 @@ if [[ -n "$SIGNING_IDENTITY" ]]; then
         else
             echo "Signing app with identity: $SIGNING_IDENTITY"
         fi
+        echo "Warning: non-Developer-ID signatures are for local verification only."
+        echo "Warning: shipped updates must keep the same bundle identifier and Developer ID designated requirement or macOS may treat the update as a different app and invalidate Accessibility / Screen Recording grants."
     fi
 else
     echo "No signing identity provided. Applying ad-hoc signing for local verification only."
@@ -365,6 +381,14 @@ codesign_path "$APP_ROOT" "${ENTITLEMENTS_FLAG[@]}"
 
 codesign --verify --strict --verbose=2 "$SPARKLE_FRAMEWORK_DEST"
 codesign --verify --deep --strict --verbose=2 "$APP_ROOT"
+
+{
+    echo "# codesign -dv --verbose=4"
+    codesign -dv --verbose=4 "$APP_ROOT" 2>&1
+    echo
+    echo "# codesign -dr -"
+    codesign -dr - "$APP_ROOT" 2>&1
+} >"$CODESIGN_REPORT_PATH"
 
 echo "Creating ZIP artifact..."
 rm -f "$ZIP_PATH"
@@ -412,3 +436,4 @@ echo "  App: $APP_ROOT"
 echo "  ZIP: $ZIP_PATH"
 echo "  DMG: $DMG_PATH"
 echo "  Checksums: $CHECKSUM_PATH"
+echo "  Codesign report: $CODESIGN_REPORT_PATH"

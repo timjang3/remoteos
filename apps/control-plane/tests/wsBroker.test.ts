@@ -68,7 +68,8 @@ describe("registerWsBroker", () => {
     const pairing = await store.createPairing({
       deviceId: registration.device.id,
       deviceSecret: registration.deviceSecret,
-      publicPairBaseUrl: "http://localhost:5173"
+      publicPairBaseUrl: "http://localhost:5173",
+      publicHttpBaseUrl: "http://localhost:8787"
     });
     const claimed = await store.claimPairing(pairing.pairingCode, "iPhone");
 

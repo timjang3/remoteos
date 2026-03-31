@@ -9,8 +9,8 @@
     "lint": "turbo run lint",
     "test": "turbo run test && pnpm test:swift",
     "typecheck": "turbo run typecheck && pnpm build:swift",
-    "build:swift": "swift build --package-path apps/macos && swift build --package-path swift-packages/AppCore",
-    "test:swift": "swift test --package-path swift-packages/AppCore && swift build --package-path apps/macos"
+    "build:swift": "swift build --package-path apps/macos && swift build --package-path swift-packages/RemoteOSCore && swift build --package-path swift-packages/AppCore",
+    "test:swift": "swift test --package-path swift-packages/RemoteOSCore && swift test --package-path swift-packages/AppCore && swift build --package-path apps/macos"
   },
   "devDependencies": {
     "turbo": "^2.5.4",
